@@ -2,12 +2,16 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
+import Highlight from '@tiptap/extension-highlight'
+import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { TableKit } from '@tiptap/extension-table'
+import TextAlign from '@tiptap/extension-text-align'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
   ChevronDown,
   Download,
-  File,
+  File as FileIcon,
   Folder,
   ImagePlus,
   LoaderCircle,
@@ -28,9 +32,27 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+const CLIPBOARD_IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+}
+const RENDERABLE_IMAGE_TYPES = new Set(Object.keys(CLIPBOARD_IMAGE_EXTENSIONS))
+
+function namedClipboardImage(file: File, index: number) {
+  if (/\.[a-z0-9]+$/i.test(file.name)) return file
+  const extension = CLIPBOARD_IMAGE_EXTENSIONS[file.type] ?? '.png'
+  return new File([file], `pasted-image-${Date.now()}-${index + 1}${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified,
+  })
+}
+
 export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack: () => void }) {
   const queryClient = useQueryClient()
   const fileInput = useRef<HTMLInputElement>(null)
+  const pasteImages = useRef<(files: File[]) => void>(() => undefined)
   const initialized = useRef(false)
   const latestVersion = useRef(0)
   const [title, setTitle] = useState('')
@@ -47,12 +69,32 @@ export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack:
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        link: { openOnClick: false, autolink: true },
+      }),
       Image.configure({ allowBase64: false, inline: false }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      TableKit.configure({ table: { resizable: false, renderWrapper: true } }),
+      Highlight.configure({ multicolor: false }),
+      TextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right', 'justify'] }),
     ],
     content,
     editable: false,
-    editorProps: { attributes: { class: 'tiptap-content', 'aria-label': '笔记正文' } },
+    editorProps: {
+      attributes: { class: 'tiptap-content', 'aria-label': '笔记正文' },
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.items ?? [])
+          .filter((item) => item.kind === 'file' && RENDERABLE_IMAGE_TYPES.has(item.type))
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => file !== null)
+        if (!files.length) return false
+        event.preventDefault()
+        pasteImages.current(files.map(namedClipboardImage))
+        return true
+      },
+    },
     onUpdate: ({ editor: currentEditor }) => {
       setContent(currentEditor.getJSON() as TiptapDocument)
       markDirty()
@@ -122,12 +164,24 @@ export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack:
     onSuccess: async (attachment) => {
       setUploadError('')
       await queryClient.invalidateQueries({ queryKey: ['note', noteId] })
-      if (attachment.mime_type.startsWith('image/') && editor) {
-        editor.chain().focus().setImage({ src: attachmentsApi.contentUrl(attachment), alt: attachment.original_filename ?? attachment.filename ?? '图片' }).run()
+      if (RENDERABLE_IMAGE_TYPES.has(attachment.mime_type) && editor) {
+        editor.chain().focus().setImage({ src: attachmentsApi.contentUrl(attachment), alt: attachment.original_name }).run()
       }
     },
     onError: (error) => setUploadError(error.message),
   })
+  pasteImages.current = (files) => {
+    setUploadError('')
+    void (async () => {
+      for (const file of files) {
+        try {
+          await upload.mutateAsync(file)
+        } catch {
+          break
+        }
+      }
+    })()
+  }
   const removeAttachment = useMutation({
     mutationFn: attachmentsApi.remove,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['note', noteId] }),
@@ -235,10 +289,10 @@ export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack:
             {uploadError && <div className="form-error attachment-error" role="alert">{uploadError}<button onClick={() => setUploadError('')}><X size={14} /></button></div>}
             <div className="attachment-list">
               {note.data!.attachments.map((attachment) => {
-                const name = attachment.original_filename ?? attachment.filename ?? '附件'
+                const name = attachment.original_name
                 return (
                   <div className="attachment-card" key={attachment.id}>
-                    <span className="file-icon"><File size={20} /></span>
+                    <span className="file-icon"><FileIcon size={20} /></span>
                     <span className="file-details"><strong>{name}</strong><small>{formatBytes(attachment.size)}</small></span>
                     <a className="icon-button" href={attachmentsApi.contentUrl(attachment)} download={name} title="下载附件"><Download size={16} /></a>
                     {!isDeleted && <button className="icon-button danger-hover" onClick={() => removeAttachment.mutate(attachment.id)} title="删除附件"><X size={16} /></button>}

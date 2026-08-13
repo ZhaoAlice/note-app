@@ -13,12 +13,30 @@ database:
   max_overflow: 10
   pool_pre_ping: true
 storage:
-  upload_dir: ./data/uploads
+  # 相对路径以 backend/ 为基准；也可以填写绝对路径。
+  # Windows 绝对路径建议使用正斜杠，例如 D:/note-data/attachments。
+  attachment_dir: ./data/uploads
   max_file_bytes: 10485760
+  # MIME 类型对应允许的文件扩展名；删除条目即可禁用该类型。
+  allowed_types:
+    image/jpeg: [.jpg, .jpeg]
+    image/png: [.png]
+    image/gif: [.gif]
+    image/webp: [.webp]
+    application/pdf: [.pdf]
+    text/plain: [.txt]
+    text/markdown: [.md, .markdown]
+    text/csv: [.csv]
+    application/zip: [.zip]
+    application/msword: [.doc]
+    application/vnd.openxmlformats-officedocument.wordprocessingml.document: [.docx]
+    application/vnd.ms-excel: [.xls]
+    application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: [.xlsx]
+    application/vnd.ms-powerpoint: [.ppt]
+    application/vnd.openxmlformats-officedocument.presentationml.presentation: [.pptx]
 security:
   session_cookie: note_session
   csrf_cookie: note_csrf
   session_days: 30
   cookie_secure: false
   pbkdf2_iterations: 600000
-

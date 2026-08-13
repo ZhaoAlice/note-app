@@ -5,6 +5,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from ..config import AppSettings, get_settings
 from ..content import validate_content
 from ..database import get_db
 from ..dependencies import AuthContext, current_auth, require_csrf
@@ -161,18 +162,21 @@ def restore_note(note_id: str, auth: AuthContext = Depends(require_csrf), db: Se
 
 
 @router.delete("/notes/{note_id}/permanent", status_code=204)
-def permanently_delete_note(note_id: str, auth: AuthContext = Depends(require_csrf), db: Session = Depends(get_db)) -> None:
-    from ..config import get_settings
-
+def permanently_delete_note(
+    note_id: str,
+    auth: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: AppSettings = Depends(get_settings),
+) -> None:
     note = _get_note(db, auth.user.id, note_id)
     if note.deleted_at is None:
         raise HTTPException(409, "only trashed notes can be permanently deleted")
-    upload_dir = get_settings().resolve_path(get_settings().storage.upload_dir)
+    attachment_dir = settings.attachment_path()
     stored_names = [item.storage_name for item in note.attachments]
     db.delete(note)
     db.commit()
     for storage_name in stored_names:
-        (upload_dir / storage_name).unlink(missing_ok=True)
+        (attachment_dir / storage_name).unlink(missing_ok=True)
 
 
 @router.get("/tags", response_model=list[TagOut])

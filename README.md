@@ -10,11 +10,14 @@
 
 ### 笔记编辑
 
-- Tiptap 富文本编辑器，支持标题、粗体、斜体、删除线、列表、引用、代码和链接。
+- Tiptap 富文本编辑器支持 H1/H2/H3、粗斜体、下划线、删除线、高亮、对齐、列表、引用、代码、链接和分隔线。
+- 支持可嵌套待办事项，勾选状态随正文保存；支持带表头的表格及行列增删操作。
+- 高频格式直接显示在工具栏，其他排版和表格操作收纳在应用内“更多格式”菜单。
 - 停止输入约 800 毫秒后自动保存，并显示保存状态。
 - `Ctrl+S`（Windows/Linux）或 `Command+S`（macOS）立即保存。
+- 输入 `[ ] ` 或 `[x] `可创建待办，输入 `### `可创建三级标题，输入 `---` 可创建分隔线。
 - 链接使用应用内弹窗编辑，不调用浏览器原生 `prompt`、`confirm` 或 `alert`。
-- 图片可嵌入正文，其他文件以附件形式管理。
+- 图片可通过复制粘贴直接嵌入正文，其他文件以附件形式管理。
 - 编辑区占主界面主要空间，主导航和笔记列表可以分别折叠。
 
 ### 整理与查找
@@ -148,6 +151,59 @@ MySQL 建议使用 InnoDB 和 `utf8mb4`。切换到新的空数据库后执行 A
 | `storage` | 上传目录和单文件大小限制 |
 | `security` | 会话、CSRF Cookie、有效期、Secure 标志和密码迭代次数 |
 
+### 附件存储路径
+
+在 `backend/config.local.yaml` 中通过 `storage.attachment_dir` 指定附件存储目录。相对路径以 `backend/` 为基准，绝对路径直接使用：
+
+```yaml
+storage:
+  # 实际路径为 backend/data/attachments
+  attachment_dir: ./data/attachments
+  max_file_bytes: 10485760
+```
+
+Windows 绝对路径建议使用正斜杠，避免 YAML 反斜杠转义：
+
+```yaml
+storage:
+  attachment_dir: D:/note-data/attachments
+```
+
+Linux 绝对路径示例：
+
+```yaml
+storage:
+  attachment_dir: /srv/note-app/attachments
+```
+
+也可以通过环境变量覆盖：
+
+```powershell
+$env:NOTE_STORAGE__ATTACHMENT_DIR = 'D:/note-data/attachments'
+```
+
+```bash
+export NOTE_STORAGE__ATTACHMENT_DIR=/srv/note-app/attachments
+```
+
+应用启动时会自动创建该目录，运行应用的系统用户必须具有读写权限。修改路径不会自动搬迁已有附件：请先停止服务，将旧目录中的文件复制到新目录，再修改配置并重新启动。
+
+### 允许上传的文件类型
+
+`storage.allowed_types` 以 MIME 类型为键、允许的扩展名列表为值。上传时必须同时匹配 MIME 与扩展名；删除某一项即可禁用该类型：
+
+```yaml
+storage:
+  allowed_types:
+    image/jpeg: [.jpg, .jpeg]
+    image/png: [.png]
+    image/webp: [.webp]
+    application/pdf: [.pdf]
+    text/plain: [.txt]
+```
+
+修改后需要重启后端。图片类型被允许时，用户可以直接在笔记正文中按 `Ctrl+V` / `Command+V` 粘贴剪贴板图片；前端会自动保存图片并插入正文，无需打开“添加文件”。粘贴失败时会显示配置限制或大小错误。
+
 ## 安全设计
 
 - 密码使用带随机盐的 `PBKDF2-HMAC-SHA256`，不是直接保存普通 SHA-256 摘要。
@@ -211,7 +267,7 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-当前验收基线：后端 6 项 pytest、前端 23 项 Vitest 全部通过，ESLint 和生产构建通过。
+当前验收基线：后端 18 项 pytest、前端 27 项 Vitest 全部通过，ESLint 和生产构建通过。
 
 如需对 MySQL 或 PostgreSQL 运行同一套迁移与集成测试，可配置专用空测试库：
 

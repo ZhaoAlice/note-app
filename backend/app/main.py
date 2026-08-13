@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,7 +13,15 @@ from .routers import attachments, auth, notes
 
 
 settings = get_settings()
-app = FastAPI(title="Note API", version="0.1.0", debug=settings.server.debug)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    settings.attachment_path().mkdir(parents=True, exist_ok=True)
+    yield
+
+
+app = FastAPI(title="Note API", version="0.1.0", debug=settings.server.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.server.trusted_origins,
@@ -46,4 +55,3 @@ if frontend_dist.is_dir():
         if not index.is_file():
             raise HTTPException(404, "frontend build not found")
         return FileResponse(index)
-

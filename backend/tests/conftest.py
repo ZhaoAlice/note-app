@@ -36,8 +36,8 @@ def client(tmp_path: Path):
     else:
         Base.metadata.create_all(engine)
     settings = get_settings()
-    previous_upload_dir = settings.storage.upload_dir
-    settings.storage.upload_dir = str(tmp_path / "uploads")
+    previous_attachment_dir = settings.storage.attachment_dir
+    settings.storage.attachment_dir = str(tmp_path / "uploads")
 
     def override_db():
         with TestingSession() as db:
@@ -47,7 +47,7 @@ def client(tmp_path: Path):
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
-    settings.storage.upload_dir = previous_upload_dir
+    settings.storage.attachment_dir = previous_attachment_dir
     if alembic_config is not None:
         command.downgrade(alembic_config, "base")
     else:
