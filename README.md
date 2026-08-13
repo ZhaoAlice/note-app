@@ -1,14 +1,68 @@
-# Note — 多数据库富文本记事本
+# 拾笺（Note App）
 
-一个使用 FastAPI + React 构建的本地多用户记事本。支持富文本编辑、自动保存、一级分组、标签、搜索、置顶、回收站、图片和附件，并可在 SQLite、MySQL、PostgreSQL 之间切换。
+拾笺是一个使用 FastAPI、React 和 Tiptap 构建的多用户富文本记事本。应用默认使用 SQLite，也可通过配置切换到 MySQL 或 PostgreSQL。
 
-详细的产品范围与技术决策见 [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)。
+项目包含完整的认证、笔记管理、一级分组、标签、搜索、自动保存、回收站、附件、三套界面主题，以及 Windows/Linux 开发和部署脚本。
+
+技术决策、交付范围和验收记录见 [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)。
+
+## 功能
+
+### 笔记编辑
+
+- Tiptap 富文本编辑器，支持标题、粗体、斜体、删除线、列表、引用、代码和链接。
+- 停止输入约 800 毫秒后自动保存，并显示保存状态。
+- `Ctrl+S`（Windows/Linux）或 `Command+S`（macOS）立即保存。
+- 链接使用应用内弹窗编辑，不调用浏览器原生 `prompt`、`confirm` 或 `alert`。
+- 图片可嵌入正文，其他文件以附件形式管理。
+- 编辑区占主界面主要空间，主导航和笔记列表可以分别折叠。
+
+### 整理与查找
+
+- 每篇笔记可放入一个一级分组，也可保留在“未分组”。
+- 分组支持创建、行内重命名和删除；删除分组不会删除其中的笔记。
+- 标签支持创建、移除和筛选，长标签自动截断并可通过悬停查看完整内容。
+- 搜索覆盖标题、正文和标签。
+- 笔记支持置顶、重命名、移动分组、移出分组和移到回收站。
+- 笔记的常用操作集中在列表右侧的 `…` 菜单中，危险操作在菜单附近二次确认。
+- 回收站支持恢复和永久删除。
+
+### 用户与界面
+
+- 支持注册、登录、退出和多用户数据隔离。
+- 点击左下角用户名打开用户信息与设置，退出按钮保持独立。
+- 支持暖纸、明亮、深色三套完整主题，主题选择保存在浏览器本地。
+- 明亮主题以白色为主，深色主题以黑白为主，各组件使用统一的语义色彩变量。
+- 应用时间统一按 `Asia/Shanghai` 显示；数据库时间以 UTC 保存，接口返回明确的时区标记。
+- 桌面端采用三栏布局，移动端采用列表与编辑视图切换。
 
 ## 技术栈
 
-- 后端：Python 3.12、FastAPI、SQLAlchemy 2、Alembic、pytest
-- 前端：Vite、React、TypeScript、Tiptap、Vitest
+- 后端：Python 3.12、FastAPI、SQLAlchemy 2、Alembic、Pydantic、pytest
+- 前端：Vite、React 19、TypeScript、TanStack Query、Tiptap、Lucide React
+- 测试与检查：pytest、Vitest、React Testing Library、ESLint、TypeScript
 - 数据库：SQLite（默认）、MySQL 8+、PostgreSQL 14+
+
+## 项目结构
+
+```text
+note-app/
+├─ backend/
+│  ├─ app/                 # FastAPI 应用、模型、路由和安全逻辑
+│  ├─ alembic/             # 数据库迁移
+│  ├─ tests/               # 后端测试
+│  ├─ config.yaml          # 可提交的默认配置
+│  └─ pyproject.toml
+├─ frontend/
+│  ├─ src/components/      # 页面和编辑器组件
+│  ├─ src/test/            # 前端测试
+│  └─ package.json
+├─ scripts/
+│  ├─ windows/             # PowerShell 脚本
+│  └─ linux/               # Bash 脚本
+├─ IMPLEMENTATION_PLAN.md
+└─ README.md
+```
 
 ## 环境要求
 
@@ -17,64 +71,57 @@
 - Windows：PowerShell 7 或 Windows PowerShell 5.1
 - Linux：Bash 4.3+
 
-MySQL 和 PostgreSQL 是可选项。默认 SQLite 数据库会保存在 `backend/data/notebook.db`，无需安装或启动额外数据库服务。
+默认 SQLite 数据库保存在 `backend/data/notebook.db`，首次使用不需要安装额外数据库服务。
 
 ## 快速开始
 
-脚本按系统分别放在 `scripts/windows` 与 `scripts/linux`。首次安装依赖：
+### Windows
 
 ```powershell
-# Windows
 ./scripts/windows/setup.ps1
-```
-
-```bash
-# Linux
-chmod +x scripts/linux/*.sh
-./scripts/linux/setup.sh
-```
-
-启动开发环境：
-
-```powershell
-# Windows
 ./scripts/windows/dev.ps1
 ```
 
+### Linux
+
 ```bash
-# Linux
+chmod +x scripts/linux/*.sh
+./scripts/linux/setup.sh
 ./scripts/linux/dev.sh
 ```
 
-脚本会先执行 Alembic 迁移，再分别启动：
+开发脚本会先运行 Alembic 迁移，再启动：
 
-- 前端开发服务器：<http://localhost:5173>
-- 后端 API 与接口文档：<http://localhost:8000>、<http://localhost:8000/docs>
+- 前端：<http://localhost:5173>
+- 后端 API：<http://localhost:8000/api>
+- OpenAPI 文档：<http://localhost:8000/docs>
 
-Vite 将 `/api` 请求代理到后端。停止脚本时，前后端进程会一并结束。
+Vite 会把 `/api` 请求代理到 FastAPI。停止开发脚本时，前后端进程会一并结束。
 
 ## 后端配置
 
-仓库内的 `backend/config.yaml` 是可提交的默认配置。需要覆盖本机数据库地址、密码或其他私有设置时，复制并编辑本地配置：
+默认配置位于 `backend/config.yaml`。本地数据库密码、Cookie 设置等私有配置应写入已被 Git 忽略的 `backend/config.local.yaml`：
 
 ```powershell
+# Windows
 Copy-Item backend/config.yaml backend/config.local.yaml
 ```
 
 ```bash
+# Linux
 cp backend/config.yaml backend/config.local.yaml
 ```
 
-`backend/config.local.yaml` 已加入 `.gitignore`。配置优先级为：
+配置优先级从高到低为：
 
 1. `NOTE_*` 环境变量
 2. `backend/config.local.yaml`
 3. `backend/config.yaml`
-4. 程序默认值
+4. 代码默认值
 
-可通过 `NOTE_CONFIG_FILE` 指定另一份配置文件。敏感信息不要写入 `config.yaml` 或提交到版本库。
+可以通过 `NOTE_CONFIG_FILE` 指定另一份配置文件。不要把真实密码或生产凭据写入 `backend/config.yaml`。
 
-数据库 URL 示例：
+### 数据库 URL
 
 ```yaml
 # SQLite（默认）
@@ -90,53 +137,83 @@ database:
   url: postgresql+psycopg://user:password@localhost:5432/notebook
 ```
 
-MySQL 数据库应使用 InnoDB 和 `utf8mb4`。切换数据库后，对新的空数据库执行迁移即可，无需修改业务代码。
+MySQL 建议使用 InnoDB 和 `utf8mb4`。切换到新的空数据库后执行 Alembic 迁移即可，无需修改业务代码。
+
+### 主要配置项
+
+| 分组 | 用途 |
+| --- | --- |
+| `server` | 监听地址、端口、调试模式、可信来源、前端构建目录 |
+| `database` | 数据库 URL、连接池与 SQL 日志 |
+| `storage` | 上传目录和单文件大小限制 |
+| `security` | 会话、CSRF Cookie、有效期、Secure 标志和密码迭代次数 |
+
+## 安全设计
+
+- 密码使用带随机盐的 `PBKDF2-HMAC-SHA256`，不是直接保存普通 SHA-256 摘要。
+- 默认迭代次数为 600,000，验证使用常量时间比较。
+- 浏览器保存随机会话令牌，数据库只保存令牌的 SHA-256 摘要。
+- 会话 Cookie 使用 HttpOnly 和 SameSite=Lax；写请求同时验证 CSRF 令牌与可信来源。
+- 所有笔记、分组、标签和附件都按当前用户过滤，跨用户访问返回 404。
+- 本地默认 `cookie_secure: false`；HTTPS 生产环境必须改为 `true`。
 
 ## 数据库迁移
 
-`dev` 和 `start` 脚本会自动升级到最新迁移。也可以手动运行：
+`dev` 和 `start` 脚本会自动升级到最新迁移，也可以手动执行：
 
 ```powershell
+# Windows
 Push-Location backend
 & .\.venv\Scripts\python.exe -m alembic upgrade head
 Pop-Location
 ```
 
 ```bash
+# Linux
 (cd backend && .venv/bin/python -m alembic upgrade head)
 ```
 
-创建迁移时：
+创建新迁移：
 
 ```powershell
 Push-Location backend
 & .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe change"
-& .\.venv\Scripts\python.exe -m alembic upgrade head
 Pop-Location
 ```
 
 ```bash
 (cd backend && .venv/bin/python -m alembic revision --autogenerate -m "describe change")
-(cd backend && .venv/bin/python -m alembic upgrade head)
 ```
-
-Alembic 与应用使用相同的最终配置和数据库 URL。
 
 ## 测试
 
-运行后端与前端的完整测试：
+运行完整测试：
 
 ```powershell
-# Windows
 ./scripts/windows/test.ps1
 ```
 
 ```bash
-# Linux
 ./scripts/linux/test.sh
 ```
 
-默认后端测试使用临时 SQLite。配置测试数据库 URL 后，脚本会依次对 MySQL 或 PostgreSQL 运行同一套迁移与接口测试：
+单独运行：
+
+```powershell
+# 后端
+Push-Location backend
+& .\.venv\Scripts\python.exe -m pytest -q
+Pop-Location
+
+# 前端
+npm --prefix frontend test -- --run
+npm --prefix frontend run lint
+npm --prefix frontend run build
+```
+
+当前验收基线：后端 6 项 pytest、前端 23 项 Vitest 全部通过，ESLint 和生产构建通过。
+
+如需对 MySQL 或 PostgreSQL 运行同一套迁移与集成测试，可配置专用空测试库：
 
 ```powershell
 $env:TEST_MYSQL_URL = 'mysql+pymysql://user:password@localhost:3306/notebook_test?charset=utf8mb4'
@@ -150,35 +227,33 @@ export TEST_POSTGRESQL_URL='postgresql+psycopg://user:password@localhost:5432/no
 ./scripts/linux/test.sh
 ```
 
-测试库必须是可被测试进程迁移和清理的空白专用数据库，不要指向生产数据；测试结束时会执行 Alembic downgrade 清空测试表。
+测试数据库必须是可迁移和清理的专用空数据库，不要指向生产数据。
 
-## 生产构建与单端口运行
+## 生产构建与启动
 
-构建前端并执行后端检查：
+构建前端：
 
 ```powershell
-# Windows
 ./scripts/windows/build.ps1
 ```
 
 ```bash
-# Linux
 ./scripts/linux/build.sh
 ```
 
-构建产物位于 `frontend/dist`。随后启动单端口服务：
+构建产物位于 `frontend/dist`。启动单端口服务：
 
 ```powershell
-# Windows
 ./scripts/windows/start.ps1
 ```
 
 ```bash
-# Linux
 ./scripts/linux/start.sh
 ```
 
-FastAPI 会在 <http://localhost:8000> 同时提供前端静态页面和 `/api`。可额外传递 Uvicorn 参数，例如：
+FastAPI 会在 <http://localhost:8000> 同时提供前端静态资源和 `/api`。
+
+可附加 Uvicorn 参数：
 
 ```powershell
 ./scripts/windows/start.ps1 --host 0.0.0.0 --port 8080
@@ -188,17 +263,6 @@ FastAPI 会在 <http://localhost:8000> 同时提供前端静态页面和 `/api`�
 ./scripts/linux/start.sh --host 0.0.0.0 --port 8080
 ```
 
-## 常用命令
+## 当前边界
 
-```powershell
-# 仅运行后端测试
-Push-Location backend
-& .\.venv\Scripts\python.exe -m pytest
-Pop-Location
-
-# 仅运行前端测试
-npm --prefix frontend test -- --run
-
-# 前端类型检查和构建
-npm --prefix frontend run build
-```
+当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、分页、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。

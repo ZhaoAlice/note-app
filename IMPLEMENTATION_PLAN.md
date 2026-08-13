@@ -1,90 +1,193 @@
-# 多数据库富文本记事本实施计划
+# 拾笺实施计划与交付记录
 
-## 1. 目标与范围
+> 状态：已完成
+>
+> 最近验收：2026-08-13
+>
+> 技术栈：Python 3.12 + FastAPI + SQLAlchemy + Vite + React + TypeScript + Tiptap
 
-在当前目录从零实现一个本地运行的多用户记事本：后端使用 Python 3.12、FastAPI、SQLAlchemy 2 和 Alembic，前端使用 Vite、React、TypeScript 和 Tiptap。数据库支持 SQLite、MySQL、PostgreSQL，默认 SQLite。首版包含注册登录、用户数据隔离、富文本自动保存、一级分组、搜索、置顶、标签、回收站、图片嵌入和通用附件。
+## 1. 项目目标
 
-不包含邮件验证、密码找回、管理员、公开分享、实时协作、离线同步、历史版本、分页、深色主题、Docker 和公网部署。
+在当前目录从零实现一个可本地运行、可生产构建的多用户富文本记事本，并满足以下核心要求：
 
-## 2. 项目结构与运行方式
+- 后端使用 Python 和 FastAPI，前端使用 Vite 和 React。
+- 数据库支持 SQLite、MySQL 和 PostgreSQL，默认使用 SQLite。
+- 后端使用 YAML 配置文件，并允许本地配置和环境变量覆盖。
+- 密码采用 SHA-256 系列的安全派生方案。
+- 支持完整的笔记编辑、整理、搜索、附件、主题和回收站体验。
+- 提供 Windows 与 Linux 的安装、开发、测试、构建和启动脚本。
 
-- `backend/`：FastAPI 应用、配置、ORM 模型、Alembic 迁移、上传文件和 pytest 测试。
-- `frontend/`：Vite React TypeScript 应用、Tiptap 编辑器、API 客户端和 Vitest 测试。
-- `scripts/`：Windows 本地开发启动脚本和构建后单端口启动脚本。
-- 开发模式：Vite `5173` 端口将 `/api` 代理到 FastAPI `8000` 端口。
-- 构建模式：FastAPI 托管 `frontend/dist`，通过 `8000` 端口提供页面和 API。
+项目已按上述目标完成实现。密码最终采用带随机盐和迭代成本的 `PBKDF2-HMAC-SHA256`，避免直接 SHA-256 容易被离线暴力破解的问题。
 
-## 3. 后端配置
+## 2. 交付状态
 
-提供可提交的 `backend/config.yaml` 和被 Git 忽略的 `backend/config.local.yaml`。配置优先级为环境变量、私有本地配置、默认配置、代码默认值；`NOTE_CONFIG_FILE` 可指定其他配置文件。
+| 阶段 | 交付内容 | 状态 |
+| --- | --- | --- |
+| 规划 | 范围、数据模型、安全策略、接口和验收标准 | 已完成 |
+| 后端基础 | 配置加载、数据库引擎、ORM、Alembic | 已完成 |
+| 认证安全 | 注册、登录、会话、CSRF、用户隔离 | 已完成 |
+| 笔记能力 | CRUD、搜索、标签、置顶、回收站 | 已完成 |
+| 一级分组 | 创建、行内重命名、删除、移动笔记 | 已完成 |
+| 附件 | 上传、读取、下载、删除、权限校验 | 已完成 |
+| 富文本前端 | Tiptap、自动保存、快捷键、链接弹窗 | 已完成 |
+| 主题与布局 | 暖纸、明亮、深色、三栏和双侧折叠 | 已完成 |
+| 跨平台脚本 | Windows PowerShell 与 Linux Bash | 已完成 |
+| 验收 | 后端测试、前端测试、Lint、生产构建 | 已完成 |
 
-主要配置项：
+## 3. 最终项目结构
 
-- `server`：host、port、debug、可信前端来源、前端构建目录。
-- `database`：URL、echo、pool size、max overflow、pool pre-ping。
-- `storage`：上传目录、单文件 10 MB 限制。
-- `security`：会话 Cookie 名称、有效期、Secure 标志、PBKDF2 迭代次数。
+- `backend/app/`：FastAPI 入口、配置、数据库、模型、依赖、安全逻辑、序列化与路由。
+- `backend/alembic/`：SQLite、MySQL、PostgreSQL 共用的数据库迁移。
+- `backend/tests/`：认证、安全、笔记、分组、附件和用户隔离测试。
+- `frontend/src/components/`：认证页、笔记本页、编辑器、工具栏、确认弹窗和空状态。
+- `frontend/src/test/`：组件交互、编辑器、主题、操作菜单和时区测试。
+- `scripts/windows/`：PowerShell 安装、开发、测试、构建和启动脚本。
+- `scripts/linux/`：Bash 安装、开发、测试、构建和启动脚本。
 
-数据库 URL：
+运行模式：
+
+- 开发模式：Vite 运行在 `5173`，将 `/api` 代理到 FastAPI `8000`。
+- 构建模式：FastAPI 托管 `frontend/dist`，通过单个端口提供前端和 API。
+
+## 4. 配置与数据库设计
+
+提供可提交的 `backend/config.yaml` 和被 Git 忽略的 `backend/config.local.yaml`。配置优先级为：
+
+1. `NOTE_*` 环境变量
+2. `backend/config.local.yaml`
+3. `backend/config.yaml`
+4. 程序默认值
+
+`NOTE_CONFIG_FILE` 可以指定其他配置文件。
+
+支持的数据库 URL：
 
 - SQLite：`sqlite:///./data/notebook.db`
 - MySQL：`mysql+pymysql://user:password@localhost:3306/notebook?charset=utf8mb4`
 - PostgreSQL：`postgresql+psycopg://user:password@localhost:5432/notebook`
 
-## 4. 数据模型与跨数据库约束
+跨数据库约束：
 
-- `users`：UUID 字符串主键、用户名、规范化用户名、显示名称、密码哈希、创建时间。
-- `sessions`：会话令牌 SHA-256 哈希、用户、CSRF 令牌、创建与过期时间。
-- `notes`：所属用户、可空的一级分组、标题、Tiptap JSON 文本、规范化搜索文本、置顶状态、删除时间、创建与更新时间。
-- `groups`：所属用户、名称和规范化名称；同一用户内唯一，不支持嵌套。
-- `tags`：所属用户、名称、规范化名称；同一用户内唯一。
-- `note_tags`：笔记与标签多对多关联。
-- `attachments`：所属笔记、原始文件名、随机存储名、MIME、大小和创建时间。
+- ORM 使用通用 SQLAlchemy 类型和查询。
+- UUID 使用 36 字符字符串，富文本 JSON 序列化到 `Text`。
+- 数据库时间统一保存为 UTC；API 补充 UTC 标识，前端按 `Asia/Shanghai` 显示。
+- SQLite 开启外键约束；MySQL 使用 InnoDB/utf8mb4；PostgreSQL 使用 psycopg 3。
+- 所有数据库结构由同一组 Alembic 迁移维护。
 
-ORM 只使用通用 SQLAlchemy 类型和查询；富文本 JSON 序列化到 `Text`，UUID 固定为 36 字符字符串，时间统一为 UTC。SQLite 开启外键，MySQL 使用 InnoDB/utf8mb4，PostgreSQL 使用 psycopg 3。所有结构由同一组 Alembic 迁移创建。
+## 5. 最终数据模型
 
-## 5. 认证与授权
+- `users`：用户、规范化用户名、显示名称、密码哈希和创建时间。
+- `sessions`：会话令牌摘要、CSRF 令牌、创建与过期时间。
+- `notes`：用户、可空分组、标题、Tiptap JSON、搜索文本、置顶、删除和审计时间。
+- `groups`：用户、名称和规范化名称；每个用户内唯一，不允许嵌套。
+- `tags`：用户、名称和规范化名称；每个用户内唯一。
+- `note_tags`：笔记与标签的多对多关联。
+- `attachments`：笔记、原始名称、随机存储名、MIME、大小和创建时间。
+
+删除分组时只解除笔记与分组的关系；永久删除笔记时同步清理附件。
+
+## 6. 认证与安全决策
 
 - 用户名长度 3–32，密码长度 8–128，显示名称可选。
-- 密码使用 `PBKDF2-HMAC-SHA256`：每个密码独立生成 32 字节随机盐，默认 600,000 次迭代，派生 32 字节摘要。
-- 编码格式为 `pbkdf2_sha256$<iterations>$<base64-salt>$<base64-digest>`；验证使用常量时间比较，登录时支持参数升级后重新哈希。
-- 登录创建随机会话令牌，浏览器 Cookie 保存原令牌，数据库仅保存 SHA-256 令牌摘要。
-- Cookie 使用 HttpOnly、SameSite=Lax，本地默认不启用 Secure；写请求使用会话绑定的 CSRF 令牌。
-- 所有业务资源按当前用户过滤；跨用户资源统一返回 404。
+- 密码格式：`pbkdf2_sha256$<iterations>$<base64-salt>$<base64-digest>`。
+- 每个密码使用独立的 32 字节随机盐，默认 600,000 次迭代和 32 字节派生摘要。
+- 验证使用常量时间比较；登录时支持迭代参数升级后重新哈希。
+- 会话令牌随机生成，Cookie 保存原令牌，数据库只保存 SHA-256 摘要。
+- 会话 Cookie 使用 HttpOnly、SameSite=Lax；写请求验证会话绑定的 CSRF 令牌和可信来源。
+- 所有业务查询按当前用户过滤，跨用户资源统一返回 404。
+- 富文本服务端限制节点、标记、URL 协议和最大 JSON 大小。
+- 附件随机命名并限制 MIME、大小和访问所有权。
 
-## 6. 笔记与附件行为
+## 7. 后端交付
 
-- 富文本支持标题、粗体、斜体、删除线、列表、引用、行内代码、代码块、链接、撤销和重做。
-- 编辑停止约 800ms 后自动保存，并展示保存中、已保存、保存失败状态；支持 `Ctrl+S` / `Command+S` 立即保存。
-- 标题最长 200 字符，单篇 Tiptap JSON 最大 2 MB；服务端校验允许的节点、标记和 URL 协议。
-- 搜索覆盖标题、正文纯文本和标签；结果按置顶优先、更新时间倒序。
-- 每篇笔记最多属于一个一级分组，也可处于“未分组”；删除分组时保留笔记并转入“未分组”。
-- 删除先进入回收站；仅回收站笔记可永久删除，永久删除同步清理附件。
-- 内嵌图片允许 JPEG、PNG、GIF、WebP；通用附件允许 PDF、文本、Markdown、CSV、ZIP 和常见 Office 文档。
-- 文件随机命名并保存在配置目录，单文件最大 10 MB；读取、下载和删除均校验所有权。
+### 认证接口
 
-## 7. HTTP 接口
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `PATCH /api/auth/me`
+- `GET /api/auth/csrf`
 
-- 认证：`POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`、`GET /api/auth/csrf`。
-- 笔记：`GET/POST /api/notes`、`GET/PATCH/DELETE /api/notes/{id}`、`POST /api/notes/{id}/restore`、`DELETE /api/notes/{id}/permanent`。
-- 笔记列表支持 `q`、`tag`、`group_id`、`ungrouped`、`status=active|trash`。
-- 分组：`GET/POST /api/groups`、`PATCH/DELETE /api/groups/{id}`。
-- 标签：`GET /api/tags`；保存笔记时通过 `tag_names` 自动创建或复用。
-- 附件：`POST /api/notes/{id}/attachments`、`GET /api/attachments/{id}/content`、`DELETE /api/attachments/{id}`。
-- 统一错误状态包括 401、404、409、413、422 和数据库不可用的 503。
+### 笔记接口
 
-## 8. 前端体验
+- `GET /api/notes`
+- `POST /api/notes`
+- `GET /api/notes/{id}`
+- `PATCH /api/notes/{id}`
+- `DELETE /api/notes/{id}`
+- `POST /api/notes/{id}/restore`
+- `DELETE /api/notes/{id}/permanent`
 
-- `/login` 和 `/register` 提供认证界面，`/notes/:id` 提供主应用导航。
-- 桌面端主导航展示一级分组，中栏提供搜索、标签和笔记列表，右侧为编辑器；移动端切换为列表与独立编辑视图。
-- 提供暖纸（原主题）、明亮和深色三套主题，使用克制强调色和 Lucide 图标；设备本地记住主题选择。
-- 图片上传成功后插入编辑器，其他文件显示在附件列表；上传过程显示状态与错误。
-- 界面覆盖加载、空列表、无搜索结果、保存失败、会话失效和附件失败状态。
+列表支持 `q`、`tag`、`group_id`、`ungrouped` 和 `status=active|trash`。
 
-## 9. 测试与验收
+### 分组、标签和附件接口
 
-- pytest 覆盖密码随机盐、哈希验证、参数升级、注册登录、会话、CSRF、跨用户隔离和错误处理。
-- 覆盖笔记 CRUD、搜索、标签、置顶、回收站、附件类型/大小限制、路径安全与级联清理。
-- SQLite 测试默认运行；提供 `TEST_MYSQL_URL`、`TEST_POSTGRESQL_URL` 以对其他数据库运行同一套迁移和集成测试。
-- Vitest/React Testing Library 覆盖认证表单、列表筛选、编辑器、自动保存和上传反馈。
-- 最终验收执行 Alembic 迁移、后端测试、前端测试、静态检查和生产构建。
+- `GET/POST /api/groups`
+- `PATCH/DELETE /api/groups/{id}`
+- `GET /api/tags`
+- `POST /api/notes/{id}/attachments`
+- `GET /api/attachments/{id}/content`
+- `DELETE /api/attachments/{id}`
+
+统一错误响应使用 `{ "detail": ... }`，主要状态码包括 401、403、404、409、413、422 和 503。
+
+## 8. 前端交付
+
+### 页面与布局
+
+- `/login`、`/register` 提供认证界面，`/notes/:id?` 提供主应用。
+- 桌面端为主导航、笔记列表、编辑器三栏布局，编辑器占据主要可用空间。
+- 主导航和笔记列表分别提供对齐的简约折叠按钮。
+- 移动端在列表和编辑器之间切换。
+
+### 编辑体验
+
+- 支持标题、粗体、斜体、删除线、列表、引用、代码块、链接、撤销和重做。
+- 停止输入约 800 毫秒后自动保存，支持 `Ctrl+S` / `Command+S`。
+- 链接输入、删除确认和分组确认均使用应用内弹窗。
+- 位于操作菜单中的危险动作采用就近二次确认，减少鼠标移动。
+- 图片上传后可插入正文，普通文件显示在附件区。
+
+### 笔记整理
+
+- 支持一级分组、未分组、标签、搜索、置顶和回收站。
+- 分组名称在当前行内编辑。
+- 笔记重命名、置顶、移动分组、移出分组、删除和恢复集中在笔记右侧 `…` 菜单。
+- 标签限制最大展示宽度，溢出截断并通过悬停展示全文。
+- 标签删除后同步刷新列表筛选和笔记摘要。
+
+### 用户与主题
+
+- 用户名和退出为两个独立入口；用户名打开用户详情与基本设置。
+- 用户可修改显示名称。
+- 暖纸、明亮、深色是三套独立的语义色彩主题，不是简单亮度滤镜。
+- 明亮主题以白色为主，深色主题以黑白为主，所有组件和交互状态均使用主题变量。
+- 主题选择保存在浏览器本地。
+
+## 9. 验收结果
+
+最终验收结果：
+
+- 后端 pytest：6 项通过。
+- 前端 Vitest：23 项通过。
+- ESLint：通过。
+- TypeScript 检查：通过。
+- Vite 生产构建：通过。
+- SQLite 空库 Alembic `upgrade head`：通过。
+- 应用时间：UTC 存储与 `Asia/Shanghai` 显示测试通过。
+
+测试覆盖认证、密码哈希、会话、CSRF、用户隔离、笔记生命周期、标签、分组、附件、自动保存、快捷键、主题、折叠、应用内弹窗、操作菜单和时区转换。
+
+## 10. 当前边界与后续方向
+
+当前版本不包含：
+
+- 邮件验证与密码找回
+- 管理员后台
+- 公开分享与多人实时协作
+- 离线同步与历史版本
+- 大数据量分页和全文搜索引擎
+- Docker 镜像和云部署清单
+
+后续如需扩展，建议优先考虑分页与数据库索引、历史版本、导入导出、Docker 化和自动化 CI。
