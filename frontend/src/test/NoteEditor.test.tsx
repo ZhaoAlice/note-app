@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NoteEditor from '../components/NoteEditor'
 
-const { get, update, groupsList, upload, remove } = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn(), groupsList: vi.fn(), upload: vi.fn(), remove: vi.fn() }))
+const { get, update, upload, remove } = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn() }))
 
 vi.mock('../api', () => ({
   notesApi: {
@@ -13,7 +13,6 @@ vi.mock('../api', () => ({
     trash: vi.fn(),
     restore: vi.fn(),
   },
-  groupsApi: { list: groupsList },
   attachmentsApi: {
     upload,
     remove,
@@ -35,7 +34,6 @@ describe('NoteEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     get.mockResolvedValue(note)
-    groupsList.mockResolvedValue([{ id: 'g1', name: '工作' }])
     update.mockImplementation(async (_id, patch) => ({ ...note, ...patch }))
     upload.mockResolvedValue({
       id: 'a1', original_name: 'pasted-image.png', mime_type: 'image/png', size: 4,
@@ -91,11 +89,13 @@ describe('NoteEditor', () => {
     })), { timeout: 1800 })
   })
 
-  it('修改分组后随草稿自动保存', async () => {
+  it('正文不显示分组选择器并在保存时保留已有分组', async () => {
+    get.mockResolvedValueOnce({ ...note, group: { id: 'g1', name: '工作' } })
     renderEditor()
-    const group = await screen.findByLabelText('笔记分组')
-    fireEvent.change(group, { target: { value: 'g1' } })
-    await waitFor(() => expect(update).toHaveBeenCalledWith('n1', expect.objectContaining({ group_id: 'g1' })), { timeout: 1800 })
+    const title = await screen.findByLabelText('笔记标题')
+    expect(screen.queryByLabelText('笔记分组')).not.toBeInTheDocument()
+    fireEvent.change(title, { target: { value: '保留分组' } })
+    await waitFor(() => expect(update).toHaveBeenCalledWith('n1', expect.objectContaining({ title: '保留分组', group_id: 'g1' })), { timeout: 1800 })
   })
 
   it('使用 Markdown 快速创建待办并保存勾选状态', async () => {

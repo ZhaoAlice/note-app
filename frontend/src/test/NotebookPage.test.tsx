@@ -169,11 +169,18 @@ describe('NotebookPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '收起主导航' }))
     expect(shell).toHaveClass('nav-collapsed')
+    expect(screen.getByRole('button', { name: '折叠导航：全部笔记' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '折叠导航：回收站' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '折叠导航：分组' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '折叠导航：用户设置' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开主导航' }))
     expect(shell).not.toHaveClass('nav-collapsed')
 
     fireEvent.click(screen.getByRole('button', { name: '收起笔记列表' }))
     expect(shell).toHaveClass('list-collapsed')
+    expect(screen.getByRole('button', { name: '折叠列表：新建笔记' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '折叠列表：搜索笔记' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '折叠列表：当前筛选' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开笔记列表' }))
     expect(shell).not.toHaveClass('list-collapsed')
   })

@@ -422,6 +422,21 @@ export default function NotebookPage({ user }: { user: User }) {
         >
           {navOpen ? <ChevronLeft size={19} strokeWidth={1.7} /> : <ChevronRight size={19} strokeWidth={1.7} />}
         </button>
+        {!navOpen && (
+          <div className="collapsed-rail-content" aria-label="折叠主导航">
+            <span className="collapsed-brand" title="拾笺"><BookOpenText size={20} /></span>
+            <div className="collapsed-nav-actions">
+              <button className={status === 'active' && !selectedGroup ? 'active' : ''} onClick={() => switchStatus('active')} aria-label="折叠导航：全部笔记" title="全部笔记"><FileText size={18} /></button>
+              <button className={status === 'trash' ? 'active' : ''} onClick={() => switchStatus('trash')} aria-label="折叠导航：回收站" title="回收站"><Trash2 size={18} /></button>
+              <button className={status === 'active' && Boolean(selectedGroup) ? 'active' : ''} onClick={() => setNavOpen(true)} aria-label="折叠导航：分组" title="展开查看分组"><Folder size={18} /></button>
+            </div>
+            <span className="collapsed-nav-spacer" />
+            <div className="collapsed-user-actions">
+              <button className="collapsed-user" onClick={() => { setNavOpen(true); setProfileOpen(true) }} aria-label="折叠导航：用户设置" title={`${displayName} · 用户设置`}><span className="avatar">{displayName.slice(0, 1).toUpperCase()}</span></button>
+              <button onClick={() => logout.mutate()} disabled={logout.isPending} aria-label="折叠导航：退出登录" title="退出登录"><LogOut size={17} /></button>
+            </div>
+          </div>
+        )}
         <div className="rail-brand"><BookOpenText size={23} /><span>拾笺</span></div>
         <nav aria-label="笔记分类">
           <button className={status === 'active' && !selectedGroup ? 'active' : ''} onClick={() => switchStatus('active')}><FileText size={18} /><span>全部笔记</span></button>
@@ -541,6 +556,22 @@ export default function NotebookPage({ user }: { user: User }) {
             {listOpen ? <ChevronLeft size={19} strokeWidth={1.7} /> : <ChevronRight size={19} strokeWidth={1.7} />}
           </button>
         </header>
+        {!listOpen && (
+          <div className="collapsed-sidebar-content" aria-label="折叠笔记列表">
+            {status === 'active' && (
+              <button className="active" onClick={() => createNote.mutate()} disabled={createNote.isPending} aria-label="折叠列表：新建笔记" title="新建笔记"><Plus size={19} /></button>
+            )}
+            <button onClick={() => setListOpen(true)} aria-label="折叠列表：搜索笔记" title="展开并搜索笔记"><Search size={18} /></button>
+            <button
+              className={(status === 'trash' || selectedGroup || selectedTag) ? 'active' : ''}
+              onClick={() => setListOpen(true)}
+              aria-label="折叠列表：当前筛选"
+              title={listTitle}
+            >
+              {status === 'trash' ? <Trash2 size={18} /> : selectedTag ? <TagIcon size={18} /> : selectedGroup ? <Folder size={18} /> : <FileText size={18} />}
+            </button>
+          </div>
+        )}
         <div className="search-box">
           <Search size={17} />
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索笔记" aria-label="搜索笔记" />
