@@ -1,9 +1,14 @@
 from io import BytesIO
+import copy
+import base64
+
+from app.config import get_settings
 
 from .conftest import csrf_headers, register
 
 
 DOC = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "你好 world"}]}]}
+PNG_1X1 = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
 
 
 def test_auth_csrf_and_note_lifecycle(client):
@@ -49,11 +54,50 @@ def test_attachment_upload_download_delete(client):
     )
     assert upload.status_code == 201, upload.text
     attachment = upload.json()
+    stored_files = list(get_settings().attachment_path().iterdir())
+    assert len(stored_files) == 1
+    assert stored_files[0].read_bytes() == b"hello"
     content = client.get(attachment["content_url"])
     assert content.content == b"hello"
     assert content.headers["x-content-type-options"] == "nosniff"
     assert client.delete(f"/api/attachments/{attachment['id']}", headers=headers).status_code == 204
+    assert not stored_files[0].exists()
     assert client.get(attachment["content_url"]).status_code == 404
+
+
+def test_attachment_types_follow_configuration(client):
+    register(client)
+    headers = csrf_headers(client)
+    note = client.post("/api/notes", headers=headers, json={"title": "Configured files"}).json()
+    settings = get_settings()
+    previous = copy.deepcopy(settings.storage.allowed_types)
+    settings.storage.allowed_types = {"image/png": [".png"]}
+    try:
+        rejected = client.post(
+            f"/api/notes/{note['id']}/attachments",
+            headers=headers,
+            files={"file": ("readme.txt", BytesIO(b"hello"), "text/plain")},
+        )
+        assert rejected.status_code == 422
+        accepted = client.post(
+            f"/api/notes/{note['id']}/attachments",
+            headers=headers,
+            files={"file": ("pixel.png", BytesIO(PNG_1X1), "image/png")},
+        )
+        assert accepted.status_code == 201
+        image = client.get(accepted.json()["content_url"])
+        assert image.content == PNG_1X1
+        assert image.headers["content-type"] == "image/png"
+        assert image.headers["content-disposition"].startswith("inline;")
+
+        invalid_image = client.post(
+            f"/api/notes/{note['id']}/attachments",
+            headers=headers,
+            files={"file": ("broken.png", BytesIO(b"not an image"), "image/png")},
+        )
+        assert invalid_image.status_code == 422
+    finally:
+        settings.storage.allowed_types = previous
 
 
 def test_user_isolation_and_origin_validation(client):

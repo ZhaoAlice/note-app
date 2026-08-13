@@ -22,13 +22,11 @@ export type Group = {
 
 export type Attachment = {
   id: string
-  note_id: string
-  filename?: string
-  original_filename?: string
+  original_name: string
   mime_type: string
   size: number
   created_at: string
-  content_url?: string
+  content_url: string
 }
 
 export type NoteSummary = {

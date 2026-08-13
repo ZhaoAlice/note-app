@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EditorToolbar from '../components/EditorToolbar'
 import { normalizeLink } from '../lib/links'
 
-function makeEditor(link = false) {
+function makeEditor(link = false, table = false) {
   const chain = {
     focus: vi.fn(),
     setTextSelection: vi.fn(),
@@ -12,12 +12,18 @@ function makeEditor(link = false) {
     extendMarkRange: vi.fn(),
     setLink: vi.fn(),
     unsetLink: vi.fn(),
+    setParagraph: vi.fn(),
+    toggleHeading: vi.fn(),
+    toggleTaskList: vi.fn(),
+    toggleHighlight: vi.fn(),
+    insertTable: vi.fn(),
+    deleteTable: vi.fn(),
     run: vi.fn(),
   }
   Object.values(chain).forEach((method) => method.mockReturnValue(chain))
   const editor = {
     state: { selection: { from: 3, to: 3 } },
-    isActive: vi.fn((name: string) => name === 'link' && link),
+    isActive: vi.fn((name: string | Record<string, string>) => typeof name === 'string' && ((name === 'link' && link) || (name === 'table' && table))),
     getAttributes: vi.fn(() => link ? { href: 'https://old.example/' } : {}),
     chain: vi.fn(() => chain),
     can: vi.fn(() => ({ undo: () => false, redo: () => false })),
@@ -79,5 +85,35 @@ describe('EditorToolbar 链接弹窗', () => {
     fireEvent.click(screen.getByRole('button', { name: '链接' }))
     fireEvent.click(screen.getByRole('button', { name: '移除链接' }))
     expect(chain.unsetLink).toHaveBeenCalled()
+  })
+
+  it('提供三级标题、待办事项和收纳后的结构化格式', () => {
+    const { editor, chain } = makeEditor()
+    render(<EditorToolbar editor={editor} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '段落样式' }))
+    fireEvent.click(screen.getByRole('button', { name: '三级标题' }))
+    expect(chain.toggleHeading).toHaveBeenCalledWith({ level: 3 })
+
+    fireEvent.click(screen.getByRole('button', { name: '待办事项' }))
+    expect(chain.toggleTaskList).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '更多格式' }))
+    expect(screen.getByRole('menu', { name: '更多格式' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '高亮' }))
+    expect(chain.toggleHighlight).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '更多格式' }))
+    fireEvent.click(screen.getByRole('button', { name: '插入 3 × 3 表格' }))
+    expect(chain.insertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
+  })
+
+  it('光标位于表格时显示表格上下文操作', () => {
+    const { editor, chain } = makeEditor(false, true)
+    render(<EditorToolbar editor={editor} />)
+    fireEvent.click(screen.getByRole('button', { name: '更多格式' }))
+    expect(screen.queryByRole('button', { name: '插入 3 × 3 表格' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }))
+    expect(chain.deleteTable).toHaveBeenCalled()
   })
 })

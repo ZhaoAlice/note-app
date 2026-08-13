@@ -7,10 +7,30 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+def default_allowed_attachment_types() -> dict[str, list[str]]:
+    return {
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/png": [".png"],
+        "image/gif": [".gif"],
+        "image/webp": [".webp"],
+        "application/pdf": [".pdf"],
+        "text/plain": [".txt"],
+        "text/markdown": [".md", ".markdown"],
+        "text/csv": [".csv"],
+        "application/zip": [".zip"],
+        "application/msword": [".doc"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+        "application/vnd.ms-excel": [".xls"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+        "application/vnd.ms-powerpoint": [".ppt"],
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+    }
 
 
 class ServerSettings(BaseModel):
@@ -37,8 +57,39 @@ class DatabaseSettings(BaseModel):
 
 
 class StorageSettings(BaseModel):
-    upload_dir: str = "./data/uploads"
+    model_config = ConfigDict(extra="forbid")
+
+    attachment_dir: str = "./data/uploads"
     max_file_bytes: int = 10 * 1024 * 1024
+    allowed_types: dict[str, list[str]] = Field(default_factory=default_allowed_attachment_types)
+
+    @field_validator("attachment_dir")
+    @classmethod
+    def attachment_directory_is_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("storage.attachment_dir cannot be blank")
+        return value
+
+    @field_validator("allowed_types")
+    @classmethod
+    def allowed_attachment_types_are_valid(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        normalized: dict[str, list[str]] = {}
+        for raw_mime, raw_extensions in value.items():
+            mime = raw_mime.strip().lower()
+            if "/" not in mime or not raw_extensions:
+                raise ValueError("storage.allowed_types must map MIME types to non-empty extension lists")
+            extensions: list[str] = []
+            for raw_extension in raw_extensions:
+                extension = raw_extension.strip().lower()
+                if not extension.startswith(".") or len(extension) < 2 or not extension[1:].isalnum():
+                    raise ValueError("storage.allowed_types extensions must look like .png or .docx")
+                if extension not in extensions:
+                    extensions.append(extension)
+            normalized[mime] = extensions
+        if not normalized:
+            raise ValueError("storage.allowed_types cannot be empty")
+        return normalized
 
 
 class SecuritySettings(BaseModel):
@@ -63,8 +114,11 @@ class AppSettings(BaseModel):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     def resolve_path(self, value: str) -> Path:
-        path = Path(value)
+        path = Path(value).expanduser()
         return path if path.is_absolute() else (BASE_DIR / path).resolve()
+
+    def attachment_path(self) -> Path:
+        return self.resolve_path(self.storage.attachment_dir)
 
 
 def _merge(target: dict[str, Any], source: dict[str, Any]) -> None:
@@ -113,4 +167,3 @@ def load_settings() -> AppSettings:
 @lru_cache
 def get_settings() -> AppSettings:
     return load_settings()
-
