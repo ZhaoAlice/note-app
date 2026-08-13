@@ -212,6 +212,8 @@ storage:
 - 会话 Cookie 使用 HttpOnly 和 SameSite=Lax；写请求同时验证 CSRF 令牌与可信来源。
 - 所有笔记、分组、标签和附件都按当前用户过滤，跨用户访问返回 404。
 - 本地默认 `cookie_secure: false`；HTTPS 生产环境必须改为 `true`。
+- GitHub Actions 会在主分支、拉取请求及每周计划任务中审计前后端锁定依赖；中危及以上 npm 漏洞或已知 Python 漏洞会使检查失败。
+- Dependabot 每周检查 `frontend` 的 npm 依赖和 `backend` 的 Python 依赖，并将同一生态的次版本、补丁版本更新合并为一组。
 
 ## 数据库迁移
 
