@@ -9,10 +9,8 @@ import TextAlign from '@tiptap/extension-text-align'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
-  ChevronDown,
   Download,
   File as FileIcon,
-  Folder,
   ImagePlus,
   LoaderCircle,
   Paperclip,
@@ -20,7 +18,7 @@ import {
   Save,
   X,
 } from 'lucide-react'
-import { attachmentsApi, groupsApi, notesApi } from '../api'
+import { attachmentsApi, notesApi } from '../api'
 import type { NotePatch, TiptapDocument } from '../types'
 import EditorToolbar from './EditorToolbar'
 
@@ -64,7 +62,6 @@ export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack:
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [uploadError, setUploadError] = useState('')
   const note = useQuery({ queryKey: ['note', noteId], queryFn: () => notesApi.get(noteId) })
-  const groups = useQuery({ queryKey: ['groups'], queryFn: groupsApi.list })
   const isDeleted = Boolean(note.data?.deleted_at)
 
   const editor = useEditor({
@@ -237,22 +234,6 @@ export default function NoteEditor({ noteId, onBack }: { noteId: string; onBack:
             aria-label="笔记标题"
             placeholder="无标题笔记"
           />
-          <label className="group-picker">
-            <Folder size={14} />
-            <span>分组</span>
-            <span className="group-picker-select">
-              <select
-                value={groupId ?? ''}
-                disabled={isDeleted}
-                aria-label="笔记分组"
-                onChange={(event) => { setGroupId(event.target.value || null); markDirty() }}
-              >
-                <option value="">未分组</option>
-                {groups.data?.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}
-              </select>
-              <ChevronDown className="group-picker-chevron" size={14} aria-hidden="true" />
-            </span>
-          </label>
           <div className="tag-editor">
             {tagNames.map((tag) => (
               <span className="tag-pill" key={tag} title={tag}><span className="tag-pill-name">#{tag}</span>{!isDeleted && <button onClick={() => removeTag(tag)} aria-label={`移除标签 ${tag}`}><X size={12} /></button>}</span>

@@ -298,7 +298,18 @@ a { color: var(--accent); }
 .notebook-shell.list-collapsed { --sidebar-width: 48px; }
 .rail { position: relative; min-width: 0; padding: 25px 17px 0; display: flex; flex-direction: column; color: var(--rail-text); background: var(--rail-bg); border-right: 1px solid var(--rail-divider); transition: width .2s, padding .2s; overflow: hidden; }
 .rail.collapsed { width: 48px; padding: 0; }
-.rail.collapsed > :not(.rail-column-toggle) { display: none; }
+.rail.collapsed > :not(.rail-column-toggle):not(.collapsed-rail-content) { display: none; }
+.collapsed-rail-content { width: 100%; height: 100%; padding: 63px 4px 5px; display: flex; flex-direction: column; align-items: center; }
+.collapsed-brand { width: 40px; height: 40px; display: grid; place-items: center; color: var(--rail-title); }
+.collapsed-nav-actions, .collapsed-user-actions { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.collapsed-nav-actions { margin-top: 27px; }
+.collapsed-nav-actions button, .collapsed-user-actions button { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 9px; display: grid; place-items: center; color: var(--rail-icon); background: transparent; cursor: pointer; }
+.collapsed-nav-actions button:hover, .collapsed-nav-actions button.active, .collapsed-user-actions button:hover { color: var(--rail-hover-text); background: var(--rail-hover-bg); }
+.collapsed-nav-actions button.active { box-shadow: inset 2px 0 var(--accent); }
+.collapsed-nav-spacer { flex: 1; }
+.collapsed-user-actions { padding-top: 6px; border-top: 1px solid var(--rail-divider); }
+.collapsed-user-actions .collapsed-user { height: 36px; }
+.collapsed-user-actions .avatar { width: 28px; height: 28px; }
 .rail-brand { height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 9px; color: var(--rail-title); font-family: 'Noto Serif SC', serif; font-size: 19px; font-weight: 700; white-space: nowrap; }
 .column-toggle { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; display: inline-grid; place-items: center; color: var(--muted); background: transparent; cursor: pointer; }
 .column-toggle:hover { color: var(--ink); background: var(--bg-hover); }
@@ -368,7 +379,7 @@ a { color: var(--accent); }
 .profile-message { margin: 7px 0 0; color: var(--success); font-size: 11px; }
 .profile-message.error { color: var(--danger); }
 .sidebar { position: relative; min-width: 0; height: 100vh; display: flex; flex-direction: column; background: var(--warm); border-right: 1px solid var(--line); overflow: hidden; }
-.sidebar.collapsed > :not(.sidebar-header) { display: none; }
+.sidebar.collapsed > :not(.sidebar-header):not(.collapsed-sidebar-content) { display: none; }
 .sidebar-header { min-height: 105px; padding: 24px 20px 15px; display: flex; align-items: center; gap: 10px; }
 .sidebar-header > div { flex: 1; }
 .sidebar-header h1 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 22px; }
@@ -376,6 +387,9 @@ a { color: var(--accent); }
 .sidebar.collapsed .sidebar-header { min-height: 88px; padding: 24px 9px; align-items: flex-start; }
 .sidebar.collapsed .sidebar-header > :not(.sidebar-column-toggle) { display: none; }
 .sidebar.collapsed .sidebar-column-toggle { right: 10px; }
+.collapsed-sidebar-content { padding-top: 4px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.collapsed-sidebar-content button { width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; display: grid; place-items: center; color: var(--text-tertiary); background: transparent; cursor: pointer; }
+.collapsed-sidebar-content button:hover, .collapsed-sidebar-content button.active { color: var(--accent-text); background: var(--accent-soft); }
 .create-button { color: var(--text-inverse); background: var(--accent); }
 .create-button:hover { background: var(--accent-dark); }
 .search-box { height: 39px; margin: 0 19px 13px; padding: 0 11px; display: flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 9px; color: var(--muted); background: var(--bg-subtle); }
@@ -528,13 +542,6 @@ a { color: var(--accent); }
 .title-input { width: 100%; margin: 0 0 13px; padding: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font-family: 'Noto Serif SC', serif; font-size: clamp(29px, 3vw, 40px); font-weight: 700; line-height: 1.35; }
 .title-input::placeholder { color: var(--placeholder); }
 .tag-editor { min-height: 31px; margin-bottom: 27px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
-.group-picker { width: fit-content; height: 30px; margin-bottom: 8px; padding: 0 7px 0 8px; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 6px; color: var(--muted); background: var(--warm); font-size: 11px; }
-.group-picker:focus-within { border-color: var(--border-strong); box-shadow: 0 0 0 3px var(--focus-ring); }
-.group-picker-select { position: relative; min-width: 0; display: inline-flex; align-items: center; }
-.group-picker select { max-width: 180px; min-height: 28px; padding: 0 20px 0 0; border: 0; outline: 0; appearance: none; color: var(--ink); background: transparent; cursor: pointer; font-size: 11px; }
-.group-picker-chevron { position: absolute; right: 0; color: var(--text-secondary); pointer-events: none; }
-.group-picker select:disabled { cursor: default; }
-.group-picker select:disabled + .group-picker-chevron { opacity: .45; }
 .tag-editor > input { width: 100px; border: 0; outline: 0; color: var(--muted); background: transparent; font-size: 12px; }
 .tag-pill { min-width: 0; max-width: 160px; height: 25px; padding: 0 8px; border-radius: 12px; display: inline-flex; align-items: center; gap: 3px; color: var(--tag-text); background: var(--accent-soft); font-size: 11px; }
 .tag-pill-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -622,6 +629,7 @@ a { color: var(--accent); }
   .sidebar.collapsed .sidebar-header > :not(.sidebar-column-toggle) { display: initial; }
   .sidebar-column-toggle { display: none; }
   .sidebar.collapsed .search-box, .sidebar.collapsed .tag-filter, .sidebar.collapsed .note-list, .sidebar.collapsed .sidebar-footer { display: flex; }
+  .sidebar.collapsed .collapsed-sidebar-content { display: none; }
   .with-note .sidebar { display: none; }
   .editor-pane { display: none; height: 100vh; }
   .with-note .editor-pane { display: block; }
