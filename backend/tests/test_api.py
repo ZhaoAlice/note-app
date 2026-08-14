@@ -2,13 +2,27 @@ from io import BytesIO
 import copy
 import base64
 
+from sqlalchemy import func, select
+
 from app.config import get_settings
+from app.database import get_db
+from app.main import app
+from app.models import Tag
 
 from .conftest import csrf_headers, register
 
 
 DOC = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "你好 world"}]}]}
 PNG_1X1 = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+
+def database_tag_count() -> int:
+    session_generator = app.dependency_overrides[get_db]()
+    db = next(session_generator)
+    try:
+        return db.scalar(select(func.count()).select_from(Tag)) or 0
+    finally:
+        session_generator.close()
 
 
 def test_auth_csrf_and_note_lifecycle(client):
@@ -38,6 +52,7 @@ def test_auth_csrf_and_note_lifecycle(client):
     without_tags = client.patch(f"/api/notes/{note['id']}", headers=headers, json={"tag_names": []})
     assert without_tags.status_code == 200
     assert client.get("/api/tags").json() == []
+    assert database_tag_count() == 0
     assert client.delete(f"/api/notes/{note['id']}", headers=headers).status_code == 204
     assert len(client.get("/api/notes", params={"status": "trash"}).json()) == 1
     assert client.post(f"/api/notes/{note['id']}/restore", headers=headers).status_code == 200
@@ -121,11 +136,26 @@ def test_user_isolation_and_origin_validation(client):
 def test_permanent_delete_requires_trash(client):
     register(client)
     headers = csrf_headers(client)
-    note = client.post("/api/notes", headers=headers, json={"title": "Delete"}).json()
+    note = client.post("/api/notes", headers=headers, json={"title": "Delete", "tag_names": ["Temporary"]}).json()
     assert client.delete(f"/api/notes/{note['id']}/permanent", headers=headers).status_code == 409
     client.delete(f"/api/notes/{note['id']}", headers=headers)
     assert client.delete(f"/api/notes/{note['id']}/permanent", headers=headers).status_code == 204
     assert client.get(f"/api/notes/{note['id']}").status_code == 404
+    assert database_tag_count() == 0
+
+
+def test_tag_is_deleted_only_after_last_note_releases_it(client):
+    register(client)
+    headers = csrf_headers(client)
+    first = client.post("/api/notes", headers=headers, json={"title": "First", "tag_names": ["Shared"]}).json()
+    second = client.post("/api/notes", headers=headers, json={"title": "Second", "tag_names": ["Shared"]}).json()
+    assert database_tag_count() == 1
+
+    assert client.patch(f"/api/notes/{first['id']}", headers=headers, json={"tag_names": []}).status_code == 200
+    assert database_tag_count() == 1
+
+    assert client.patch(f"/api/notes/{second['id']}", headers=headers, json={"tag_names": []}).status_code == 200
+    assert database_tag_count() == 0
 
 
 def test_group_lifecycle_and_note_assignment(client):
