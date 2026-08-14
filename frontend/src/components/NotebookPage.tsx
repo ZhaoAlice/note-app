@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  Download,
   FileText,
   Folder,
   FolderOpen,
@@ -20,6 +21,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Settings,
   Sun,
   Tag as TagIcon,
   Trash2,
@@ -30,6 +32,7 @@ import { formatLongDate, relativeDate } from '../time'
 import type { Group, NotePatch, NoteSummary, User } from '../types'
 import { applyTheme, getTheme, themes, type ThemeId } from '../theme'
 import ConfirmDialog from './ConfirmDialog'
+import DataManagementDialog from './DataManagementDialog'
 import EmptyState from './EmptyState'
 import NoteEditor from './NoteEditor'
 
@@ -43,9 +46,11 @@ function NoteRow({
   selected,
   status,
   updating,
+  exporting,
   updateError,
   onSelect,
   onUpdate,
+  onExport,
   onRequestTrash,
   onRestore,
   onPermanentDelete,
@@ -55,9 +60,11 @@ function NoteRow({
   selected: boolean
   status: 'active' | 'trash'
   updating: boolean
+  exporting: boolean
   updateError?: string
   onSelect: () => void
   onUpdate: (patch: NotePatch) => Promise<void>
+  onExport: () => Promise<void>
   onRequestTrash: () => Promise<void>
   onRestore: () => Promise<void>
   onPermanentDelete: () => Promise<void>
@@ -120,6 +127,15 @@ function NoteRow({
     }
   }
 
+  async function exportMarkdown() {
+    try {
+      await onExport()
+      setMenuOpen(false)
+    } catch {
+      // Keep the menu open so the export error remains visible and can be retried.
+    }
+  }
+
   async function confirmTrash() {
     try {
       await onRequestTrash()
@@ -170,6 +186,9 @@ function NoteRow({
             <div className="note-menu" role="menu" aria-label={`${note.title || '无标题笔记'}操作`}>
               {panel === 'actions' && (
                 <>
+                  <button role="menuitem" onClick={() => void exportMarkdown()} disabled={exporting}>
+                    <Download size={14} />{exporting ? '正在导出…' : '导出 Markdown'}
+                  </button>
                   {status === 'active' ? (
                     <>
                       <button role="menuitem" onClick={() => void togglePinned()} disabled={updating}>{note.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{note.is_pinned ? '取消置顶' : '置顶笔记'}</button>
@@ -243,6 +262,9 @@ export default function NotebookPage({ user }: { user: User }) {
   const [navOpen, setNavOpen] = useState(true)
   const [listOpen, setListOpen] = useState(true)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [dataManagementOpen, setDataManagementOpen] = useState(false)
+  const [exportingNoteId, setExportingNoteId] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<{ id: string; message: string } | null>(null)
   const [displayNameDraft, setDisplayNameDraft] = useState(user.display_name ?? '')
   const [theme, setTheme] = useState<ThemeId>(getTheme)
   const [creatingGroup, setCreatingGroup] = useState(false)
@@ -347,6 +369,28 @@ export default function NotebookPage({ user }: { user: User }) {
       if (noteId === deletedId) navigate('/notes')
     },
   })
+
+  async function exportNoteMarkdown(note: NoteSummary) {
+    setExportError(null)
+    setExportingNoteId(note.id)
+    try {
+      const exported = await notesApi.exportMarkdown(note.id)
+      const url = URL.createObjectURL(exported.blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = exported.filename || `note-${note.id.slice(0, 8)}.md`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : '导出失败，请稍后重试'
+      setExportError({ id: note.id, message })
+      throw caught
+    } finally {
+      setExportingNoteId(null)
+    }
+  }
 
   function switchStatus(next: 'active' | 'trash') {
     setStatus(next)
@@ -509,6 +553,12 @@ export default function NotebookPage({ user }: { user: User }) {
                 ))}
               </div>
             </fieldset>
+            <section className="profile-data-settings" aria-labelledby="profile-data-title">
+              <div><strong id="profile-data-title">数据管理</strong><span>导入、导出与备份笔记</span></div>
+              <button className="button compact" type="button" onClick={() => { setProfileOpen(false); setDataManagementOpen(true) }}>
+                打开
+              </button>
+            </section>
             <form className="profile-settings" onSubmit={saveProfile}>
               <label htmlFor="profile-display-name">显示名称</label>
               <input
@@ -607,7 +657,10 @@ export default function NotebookPage({ user }: { user: User }) {
                 || (trashListNote.isPending && trashListNote.variables === note.id)
                 || (restoreListNote.isPending && restoreListNote.variables === note.id)
                 || (permanentlyDeleteListNote.isPending && permanentlyDeleteListNote.variables === note.id)}
-              updateError={quickUpdateNote.isError && quickUpdateNote.variables?.id === note.id
+              exporting={exportingNoteId === note.id}
+              updateError={exportError?.id === note.id
+                ? exportError.message
+                : quickUpdateNote.isError && quickUpdateNote.variables?.id === note.id
                 ? quickUpdateNote.error.message
                 : trashListNote.isError && trashListNote.variables === note.id
                   ? trashListNote.error.message
@@ -616,6 +669,7 @@ export default function NotebookPage({ user }: { user: User }) {
                     : permanentlyDeleteListNote.isError && permanentlyDeleteListNote.variables === note.id ? permanentlyDeleteListNote.error.message : undefined}
               onSelect={() => navigate(`/notes/${note.id}`)}
               onUpdate={(patch) => quickUpdateNote.mutateAsync({ id: note.id, patch }).then(() => undefined)}
+              onExport={() => exportNoteMarkdown(note)}
               onRequestTrash={() => { trashListNote.reset(); return trashListNote.mutateAsync(note.id) }}
               onRestore={() => { restoreListNote.reset(); return restoreListNote.mutateAsync(note.id).then(() => undefined) }}
               onPermanentDelete={() => { permanentlyDeleteListNote.reset(); return permanentlyDeleteListNote.mutateAsync(note.id) }}
@@ -623,7 +677,10 @@ export default function NotebookPage({ user }: { user: User }) {
           ))}
           {notes.data?.length === 0 && <EmptyState filtered={filtered} onCreate={() => createNote.mutate()} />}
         </div>
-        <footer className="sidebar-footer"><span>{notes.data?.length ?? 0} 篇笔记</span></footer>
+        <footer className="sidebar-footer">
+          <span>{notes.data?.length ?? 0} 篇笔记</span>
+          <button className="mobile-settings-button" type="button" onClick={() => setProfileOpen(true)} aria-label="打开用户设置"><Settings size={17} /></button>
+        </footer>
       </section>
 
       <section className="editor-pane">
@@ -650,6 +707,18 @@ export default function NotebookPage({ user }: { user: User }) {
         onCancel={() => setPendingAction(null)}
         onConfirm={confirmPendingAction}
       />
+      {dataManagementOpen && (
+        <DataManagementDialog
+          onClose={() => setDataManagementOpen(false)}
+          onImported={async () => {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['notes'] }),
+              queryClient.invalidateQueries({ queryKey: ['tags'] }),
+              queryClient.invalidateQueries({ queryKey: ['groups'] }),
+            ])
+          }}
+        />
+      )}
     </main>
   )
 }

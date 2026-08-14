@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from .config import get_settings
-from .routers import attachments, auth, notes
+from .routers import attachments, auth, data, notes
 
 
 settings = get_settings()
@@ -32,6 +32,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(notes.router)
 app.include_router(attachments.router)
+app.include_router(data.router)
 
 
 @app.exception_handler(OperationalError)

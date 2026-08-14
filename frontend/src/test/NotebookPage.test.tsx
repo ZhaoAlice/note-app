@@ -4,15 +4,16 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NotebookPage from '../components/NotebookPage'
 
-const { list, create, update, trash, restore, permanentlyDelete, tagsList, groupsList, groupCreate, groupRename, groupRemove, logout, updateProfile } = vi.hoisted(() => ({
-  list: vi.fn(), create: vi.fn(), update: vi.fn(), trash: vi.fn(), restore: vi.fn(), permanentlyDelete: vi.fn(), tagsList: vi.fn(), groupsList: vi.fn(), groupCreate: vi.fn(), groupRename: vi.fn(), groupRemove: vi.fn(), logout: vi.fn(), updateProfile: vi.fn(),
+const { list, create, update, trash, restore, permanentlyDelete, exportMarkdown, tagsList, groupsList, groupCreate, groupRename, groupRemove, logout, updateProfile, exportData, importData } = vi.hoisted(() => ({
+  list: vi.fn(), create: vi.fn(), update: vi.fn(), trash: vi.fn(), restore: vi.fn(), permanentlyDelete: vi.fn(), exportMarkdown: vi.fn(), tagsList: vi.fn(), groupsList: vi.fn(), groupCreate: vi.fn(), groupRename: vi.fn(), groupRemove: vi.fn(), logout: vi.fn(), updateProfile: vi.fn(), exportData: vi.fn(), importData: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
-  notesApi: { list, create, update, trash, restore, permanentlyDelete },
+  notesApi: { list, create, update, trash, restore, permanentlyDelete, exportMarkdown },
   tagsApi: { list: tagsList },
   groupsApi: { list: groupsList, create: groupCreate, rename: groupRename, remove: groupRemove },
   authApi: { logout, updateProfile },
+  dataApi: { exportData, importData },
 }))
 
 function renderPage() {
@@ -50,6 +51,7 @@ describe('NotebookPage', () => {
     trash.mockResolvedValue(undefined)
     restore.mockResolvedValue(undefined)
     permanentlyDelete.mockResolvedValue(undefined)
+    exportMarkdown.mockResolvedValue({ blob: new Blob(['# 旅行清单']), filename: '旅行清单.md' })
     logout.mockResolvedValue(undefined)
     updateProfile.mockResolvedValue({ id: 'u1', username: 'writer', display_name: '小记' })
   })
@@ -119,6 +121,22 @@ describe('NotebookPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '旅行清单的更多操作' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '移出当前分组' }))
     await waitFor(() => expect(update).toHaveBeenLastCalledWith('n1', { group_id: null }))
+  })
+
+  it('从笔记菜单单独导出 Markdown 文档', async () => {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:note') })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    renderPage()
+    await screen.findByText('旅行清单')
+
+    fireEvent.click(screen.getByRole('button', { name: '旅行清单的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 Markdown' }))
+
+    await waitFor(() => expect(exportMarkdown).toHaveBeenCalledWith('n1'))
+    expect(click).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu', { name: '旅行清单操作' })).not.toBeInTheDocument()
+    click.mockRestore()
   })
 
   it('可以从笔记菜单移到回收站', async () => {
@@ -210,5 +228,16 @@ describe('NotebookPage', () => {
     expect(within(dialog).queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
     await waitFor(() => expect(logout).toHaveBeenCalledOnce())
+  })
+
+  it('从用户设置打开数据管理', async () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /查看 writer 的用户信息和设置/ }))
+    const profile = screen.getByRole('dialog', { name: 'writer' })
+    expect(within(profile).getByText('导入、导出与备份笔记')).toBeInTheDocument()
+
+    fireEvent.click(within(profile).getByRole('button', { name: '打开' }))
+    expect(screen.queryByRole('dialog', { name: 'writer' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '数据管理' })).toBeInTheDocument()
   })
 })
