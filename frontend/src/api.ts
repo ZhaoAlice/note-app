@@ -42,6 +42,29 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T
 }
 
+async function requestBlob(path: string): Promise<{ blob: Blob; filename?: string }> {
+  const response = await fetch(path, { credentials: 'include' })
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? ''
+    const payload = contentType.includes('application/json') ? await response.json() : await response.text()
+    if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('auth:unauthorized'))
+    throw new ApiError(errorMessage(payload, `请求失败 (${response.status})`), response.status, payload)
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const encodedFilename = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const plainFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  let filename = plainFilename
+  if (encodedFilename) {
+    try {
+      filename = decodeURIComponent(encodedFilename)
+    } catch {
+      filename = encodedFilename
+    }
+  }
+  return { blob: await response.blob(), filename }
+}
+
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
   updateProfile: (body: { display_name: string | null }) => request<User>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
@@ -81,6 +104,7 @@ export const notesApi = {
     return request<NoteSummary[]>(`/api/notes?${query}`)
   },
   get: (id: string) => request<NoteDetail>(`/api/notes/${id}`),
+  exportMarkdown: (id: string) => requestBlob(`/api/notes/${id}/export?format=markdown`),
   create: (group_id?: string | null) => request<NoteDetail>('/api/notes', { method: 'POST', body: JSON.stringify({ title: '', content: { type: 'doc', content: [] }, tag_names: [], group_id: group_id ?? null }) }),
   update: (id: string, patch: NotePatch) => request<NoteDetail>(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   trash: (id: string) => request<void>(`/api/notes/${id}`, { method: 'DELETE' }),
@@ -105,4 +129,22 @@ export const attachmentsApi = {
   },
   remove: (id: string) => request<void>(`/api/attachments/${id}`, { method: 'DELETE' }),
   contentUrl: (attachment: Attachment) => attachment.content_url ?? `/api/attachments/${attachment.id}/content`,
+}
+
+export type DataFormat = 'backup' | 'markdown'
+
+export type DataImportResult = {
+  notes: number
+  attachments: number
+  renamed: number
+  warnings: string[]
+}
+
+export const dataApi = {
+  exportData: (format: DataFormat) => requestBlob(`/api/data/export?format=${format}`),
+  importData: (format: DataFormat, file: File) => {
+    const body = new FormData()
+    body.set('file', file)
+    return request<DataImportResult>(`/api/data/import?format=${format}`, { method: 'POST', body })
+  },
 }

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Literal
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from ..archive import markdown_filename, render_note_markdown
 from ..config import AppSettings, get_settings
 from ..content import validate_content
 from ..database import get_db
@@ -110,6 +114,28 @@ def create_note(payload: NoteCreate, auth: AuthContext = Depends(require_csrf), 
 @router.get("/notes/{note_id}", response_model=NoteDetail)
 def get_note(note_id: str, auth: AuthContext = Depends(current_auth), db: Session = Depends(get_db)) -> NoteDetail:
     return note_detail(_get_note(db, auth.user.id, note_id))
+
+
+@router.get("/notes/{note_id}/export")
+def export_note(
+    note_id: str,
+    format: Literal["markdown"],
+    request: Request,
+    auth: AuthContext = Depends(current_auth),
+    db: Session = Depends(get_db),
+) -> Response:
+    note = _get_note(db, auth.user.id, note_id)
+    attachment_urls = {
+        item.id: str(request.url_for("attachment_content", attachment_id=item.id)) for item in note.attachments
+    }
+    exported = render_note_markdown(note, attachment_urls)
+    filename = markdown_filename(note)
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="note-{note.id[:8]}.md"; filename*=UTF-8\'\'{quote(filename)}'
+        ),
+    }
+    return Response(content=exported.markdown.encode("utf-8"), media_type="text/markdown", headers=headers)
 
 
 @router.patch("/notes/{note_id}", response_model=NoteDetail)
