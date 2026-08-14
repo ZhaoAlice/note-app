@@ -32,7 +32,19 @@ def _get_note(db: Session, user_id: str, note_id: str) -> Note:
     return note
 
 
+def _delete_orphaned_tags(db: Session, user_id: str, tag_ids: set[str]) -> None:
+    if not tag_ids:
+        return
+    db.flush()
+    orphaned_tags = db.scalars(
+        select(Tag).where(Tag.user_id == user_id, Tag.id.in_(tag_ids), ~Tag.notes.any())
+    ).all()
+    for tag in orphaned_tags:
+        db.delete(tag)
+
+
 def _set_tags(db: Session, note: Note, user_id: str, names: list[str]) -> None:
+    previous_tag_ids = {tag.id for tag in note.tags}
     unique: dict[str, str] = {}
     for raw_name in names:
         name = raw_name.strip()
@@ -55,6 +67,8 @@ def _set_tags(db: Session, note: Note, user_id: str, names: list[str]) -> None:
             db.add(tag)
         result.append(tag)
     note.tags = result
+    retained_tag_ids = {tag.id for tag in result if tag.id is not None}
+    _delete_orphaned_tags(db, user_id, previous_tag_ids - retained_tag_ids)
 
 
 def _get_group(db: Session, user_id: str, group_id: str) -> Group:
@@ -199,7 +213,9 @@ def permanently_delete_note(
         raise HTTPException(409, "only trashed notes can be permanently deleted")
     attachment_dir = settings.attachment_path()
     stored_names = [item.storage_name for item in note.attachments]
+    tag_ids = {tag.id for tag in note.tags}
     db.delete(note)
+    _delete_orphaned_tags(db, auth.user.id, tag_ids)
     db.commit()
     for storage_name in stored_names:
         (attachment_dir / storage_name).unlink(missing_ok=True)
