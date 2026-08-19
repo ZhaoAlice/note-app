@@ -9,6 +9,11 @@ import 'react-pdf/dist/Page/TextLayer.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
+const PDF_DOCUMENT_OPTIONS = Object.freeze({
+  isEvalSupported: false,
+  withCredentials: true,
+})
+
 function OcrTextLayer({
   bookId,
   height,
@@ -278,7 +283,7 @@ export default function PdfReader({
             setNumberOfPages(numPages)
             setCurrentPage((value) => Math.max(0, Math.min(numPages - 1, value)))
           }}
-          options={{ isEvalSupported: false, withCredentials: true }}
+          options={PDF_DOCUMENT_OPTIONS}
         >
           {continuous
             ? Array.from({ length: numberOfPages }, (_, pageIndex) => (
