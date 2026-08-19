@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from .config import get_settings
-from .routers import attachments, auth, data, notes
+from .book_ocr import start_ocr_worker, stop_ocr_worker
+from .routers import attachments, auth, books, data, notes
 
 
 settings = get_settings()
@@ -18,7 +19,12 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings.attachment_path().mkdir(parents=True, exist_ok=True)
-    yield
+    settings.book_path().mkdir(parents=True, exist_ok=True)
+    start_ocr_worker(settings)
+    try:
+        yield
+    finally:
+        stop_ocr_worker()
 
 
 app = FastAPI(title="Note API", version="0.1.0", debug=settings.server.debug, lifespan=lifespan)
@@ -32,6 +38,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(notes.router)
 app.include_router(attachments.router)
+app.include_router(books.router)
 app.include_router(data.router)
 
 

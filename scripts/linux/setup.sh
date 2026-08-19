@@ -31,5 +31,9 @@ else
   (cd "$backend_dir" && "$backend_python" -m pip install -e '.[test]')
 fi
 
+backend_python="$backend_dir/.venv/bin/python"
+[[ -x "$backend_python" ]] || { echo 'Backend virtual environment is missing after dependency installation.' >&2; exit 1; }
+(cd "$backend_dir" && "$backend_python" -m app.book_ocr --prepare)
+
 npm --prefix "$frontend_dir" ci
 echo 'Dependencies installed successfully.'

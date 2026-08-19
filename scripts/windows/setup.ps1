@@ -36,6 +36,11 @@ try {
         & $venvPython -m pip install -e '.[test]'
         if ($LASTEXITCODE -ne 0) { throw 'Failed to install backend dependencies.' }
     }
+    $preparedPython = Join-Path $backendDir '.venv\Scripts\python.exe'
+    if (Test-Path $preparedPython) {
+        & $preparedPython -m app.book_ocr --prepare
+        if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare local OCR models.' }
+    }
 }
 finally {
     Pop-Location

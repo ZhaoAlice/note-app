@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -30,6 +30,7 @@ class User(Base):
     notes: Mapped[list[Note]] = relationship(back_populates="user", cascade="all, delete-orphan")
     groups: Mapped[list[Group]] = relationship(back_populates="user", cascade="all, delete-orphan")
     tags: Mapped[list[Tag]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    books: Mapped[list[Book]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class SessionModel(Base):
@@ -101,3 +102,89 @@ class Attachment(Base):
     size: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     note: Mapped[Note] = relationship(back_populates="attachments")
+
+
+class Book(Base):
+    __tablename__ = "books"
+    __table_args__ = (
+        Index("ix_books_user_updated", "user_id", "updated_at"),
+        Index("ix_books_user_format", "user_id", "format"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    author: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    format: Mapped[str] = mapped_column(String(16))
+    original_name: Mapped[str] = mapped_column(String(255))
+    storage_name: Mapped[str] = mapped_column(String(100), unique=True)
+    reader_storage_name: Mapped[str] = mapped_column(String(100), unique=True)
+    cover_storage_name: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
+    cover_mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size: Mapped[int] = mapped_column(Integer)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    search_text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    user: Mapped[User] = relationship(back_populates="books")
+    reading_state: Mapped[BookReadingState | None] = relationship(
+        back_populates="book", cascade="all, delete-orphan", uselist=False
+    )
+    annotations: Mapped[list[BookAnnotation]] = relationship(back_populates="book", cascade="all, delete-orphan")
+    text_units: Mapped[list[BookTextUnit]] = relationship(back_populates="book", cascade="all, delete-orphan")
+    ocr_job: Mapped[BookOcrJob | None] = relationship(
+        back_populates="book", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class BookReadingState(Base):
+    __tablename__ = "book_reading_states"
+    book_id: Mapped[str] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), primary_key=True)
+    locator: Mapped[str] = mapped_column(Text, default="null")
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    settings: Mapped[str] = mapped_column(Text, default="{}")
+    last_read_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    book: Mapped[Book] = relationship(back_populates="reading_state")
+
+
+class BookAnnotation(Base):
+    __tablename__ = "book_annotations"
+    __table_args__ = (Index("ix_book_annotations_book_created", "book_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    book_id: Mapped[str] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(20))
+    locator: Mapped[str] = mapped_column(Text)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    book: Mapped[Book] = relationship(back_populates="annotations")
+
+
+class BookTextUnit(Base):
+    __tablename__ = "book_text_units"
+    __table_args__ = (UniqueConstraint("book_id", "unit_index", name="uq_book_text_units_book_index"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    book_id: Mapped[str] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), index=True)
+    unit_index: Mapped[int] = mapped_column(Integer)
+    locator: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text, default="")
+    boxes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(24), default="native")
+    label: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    book: Mapped[Book] = relationship(back_populates="text_units")
+
+
+class BookOcrJob(Base):
+    __tablename__ = "book_ocr_jobs"
+    book_id: Mapped[str] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    pages_total: Mapped[int] = mapped_column(Integer, default=0)
+    pages_done: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    book: Mapped[Book] = relationship(back_populates="ocr_job")

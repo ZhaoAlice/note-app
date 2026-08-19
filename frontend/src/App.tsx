@@ -4,6 +4,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { authApi, ApiError } from './api'
 import AuthPage from './components/AuthPage'
 import NotebookPage from './components/NotebookPage'
+import BookLibraryPage from './components/BookLibraryPage'
+import BookReader from './components/BookReader'
 
 function App() {
   const queryClient = useQueryClient()
@@ -59,6 +61,8 @@ function App() {
       <Route path="/login" element={signedIn ? <Navigate to="/notes" replace /> : <AuthPage mode="login" />} />
       <Route path="/register" element={signedIn ? <Navigate to="/notes" replace /> : <AuthPage mode="register" />} />
       <Route path="/notes/:noteId?" element={signedIn ? <NotebookPage user={me.data!} /> : <Navigate to="/login" replace />} />
+      <Route path="/books" element={signedIn ? <BookLibraryPage user={me.data!} /> : <Navigate to="/login" replace />} />
+      <Route path="/books/:bookId/read" element={signedIn ? <BookReader user={me.data!} /> : <Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to={signedIn ? '/notes' : '/login'} replace />} />
     </Routes>
   )

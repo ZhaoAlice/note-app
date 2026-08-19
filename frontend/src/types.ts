@@ -59,3 +59,126 @@ export type ApiErrorBody = {
   detail?: string | Array<{ msg: string; loc?: Array<string | number> }>
   message?: string
 }
+
+export type BookFormat = 'epub' | 'pdf' | 'txt' | 'md' | 'markdown'
+
+export type BookOcrStatus = 'not_required' | 'queued' | 'running' | 'completed' | 'failed'
+
+export type BookSummary = {
+  id: string
+  title: string
+  author: string | null
+  format: BookFormat
+  size: number
+  page_count: number | null
+  cover_url: string | null
+  content_url: string
+  download_url: string
+  progress: number
+  ocr_status: BookOcrStatus | null
+  ocr_progress?: number | null
+  last_read_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type BookDetail = BookSummary & {
+  ocr_error?: string | null
+}
+
+export type EpubBookLocation = {
+  kind: 'epub'
+  cfi: string
+  href?: string | null
+  end_cfi?: string | null
+}
+
+export type PdfBookLocation = {
+  kind: 'pdf'
+  page_index: number
+  rects?: Array<{ left: number; top: number; width: number; height: number }>
+}
+
+export type TextBookLocation = {
+  kind: 'text'
+  start: number
+  end?: number
+  quote?: string | null
+}
+
+export type BookLocation = EpubBookLocation | PdfBookLocation | TextBookLocation
+
+export type BookReadingSettings = {
+  font_size?: number
+  font_family?: string
+  line_height?: number
+  layout?: 'paginated' | 'scrolled' | 'continuous' | 'single-page'
+  theme?: 'warm' | 'light' | 'dark'
+  zoom?: number
+}
+
+export type BookReadingState = {
+  book_id: string
+  locator: BookLocation | null
+  progress: number
+  font_size: number
+  font_family: string
+  line_height: number
+  theme: string
+  layout: string
+  last_read_at: string | null
+  updated_at: string | null
+}
+
+export type BookReadingStateInput = Omit<BookReadingState, 'book_id' | 'last_read_at' | 'updated_at'>
+
+export type BookAnnotationType = 'bookmark' | 'highlight' | 'underline'
+
+export type BookAnnotation = {
+  id: string
+  book_id: string
+  type: BookAnnotationType
+  locator: BookLocation
+  color: string | null
+  quote: string | null
+  note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type BookAnnotationInput = {
+  type: BookAnnotationType
+  locator: BookLocation
+  color?: string | null
+  quote?: string | null
+  note?: string | null
+}
+
+export type BookSearchHit = {
+  unit_index: number
+  excerpt: string
+  locator: BookLocation
+  label: string | null
+  source: string | null
+}
+
+export type BookSearchResult = {
+  items: BookSearchHit[]
+  index_complete: boolean
+}
+
+export type BookOcrTextBox = {
+  text: string
+  score: number
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export type BookPageText = {
+  page_index: number
+  source: string
+  text: string
+  boxes: BookOcrTextBox[]
+}

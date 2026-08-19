@@ -55,6 +55,8 @@ def import_data(
         return {
             "notes": result.notes,
             "attachments": result.attachments,
+            "books": result.books,
+            "annotations": result.annotations,
             "renamed": result.renamed,
             "warnings": result.warnings,
         }

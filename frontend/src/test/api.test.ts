@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dataApi, notesApi } from '../api'
+import { booksApi, dataApi, notesApi } from '../api'
 
 describe('dataApi', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -21,14 +21,14 @@ describe('dataApi', () => {
   })
 
   it('以 multipart 表单上传导入文件', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ notes: 2, attachments: 1, renamed: 0, warnings: [] }), {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ notes: 2, attachments: 1, books: 1, annotations: 3, renamed: 0, warnings: [] }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }))
     vi.stubGlobal('fetch', fetchMock)
     const file = new File(['# 一则笔记'], 'note.md', { type: 'text/markdown' })
 
-    await expect(dataApi.importData('markdown', file)).resolves.toEqual({ notes: 2, attachments: 1, renamed: 0, warnings: [] })
+    await expect(dataApi.importData('markdown', file)).resolves.toEqual({ notes: 2, attachments: 1, books: 1, annotations: 3, renamed: 0, warnings: [] })
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(path).toBe('/api/data/import?format=markdown')
     expect(init.method).toBe('POST')
@@ -52,5 +52,38 @@ describe('dataApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/notes/note-1/export?format=markdown', { credentials: 'include' })
     expect(result.filename).toBe('单篇笔记.md')
     expect(result.blob).toBeInstanceOf(Blob)
+  })
+})
+
+describe('booksApi', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('序列化书架筛选和排序参数', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await booksApi.list({ q: '设计', format: 'pdf', sort: 'title' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/books?q=%E8%AE%BE%E8%AE%A1&format=pdf&sort=title', expect.objectContaining({ credentials: 'include' }))
+    await booksApi.getPageText('book-1', 2)
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/books/book-1/pages/2/text', expect.objectContaining({ credentials: 'include' }))
+  })
+
+  it('使用 multipart 表单上传书籍和封面', async () => {
+    const response = { id: 'b1', title: '书', author: null, format: 'epub', size: 4, page_count: null, cover_url: null, content_url: '/content', download_url: '/download', progress: 0, ocr_status: 'not_required', ocr_progress: null, last_read_at: null, created_at: '', updated_at: '' }
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(response), { status: 201, headers: { 'Content-Type': 'application/json' } })))
+    vi.stubGlobal('fetch', fetchMock)
+    const book = new File(['book'], 'book.epub')
+    const cover = new File(['cover'], 'cover.png')
+
+    await booksApi.upload(book)
+    await booksApi.updateCover('b1', cover)
+
+    const uploadInit = fetchMock.mock.calls[0][1] as RequestInit
+    const coverInit = fetchMock.mock.calls[1][1] as RequestInit
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/books')
+    expect((uploadInit.body as FormData).get('file')).toBe(book)
+    expect(new Headers(uploadInit.headers).has('Content-Type')).toBe(false)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/books/b1/cover')
+    expect((coverInit.body as FormData).get('file')).toBe(cover)
   })
 })

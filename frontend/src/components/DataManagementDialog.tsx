@@ -134,7 +134,7 @@ export default function DataManagementDialog({ onClose, onImported }: DataManage
         <header>
           <div>
             <h2 id={titleId}>数据管理</h2>
-            <p id={descriptionId}>备份全部笔记，或通过备份包和 Markdown 文件迁移数据。</p>
+            <p id={descriptionId}>备份全部笔记与书籍，或通过备份包和 Markdown 文件迁移数据。</p>
           </div>
           <button type="button" className="data-dialog-close" onClick={onClose} disabled={busy} aria-label="关闭数据管理">
             <X size={18} />
@@ -150,7 +150,7 @@ export default function DataManagementDialog({ onClose, onImported }: DataManage
             <div className="data-export-actions">
               <button ref={firstActionRef} type="button" onClick={() => handleExport('backup')} disabled={busy}>
                 {exporting === 'backup' ? <LoaderCircle className="spin" size={17} /> : <Archive size={17} />}
-                <span><strong>导出完整备份</strong><small>笔记、分组、标签和附件</small></span>
+                <span><strong>导出完整备份</strong><small>笔记、书籍、阅读进度和批注</small></span>
               </button>
               <button type="button" onClick={() => handleExport('markdown')} disabled={busy}>
                 {exporting === 'markdown' ? <LoaderCircle className="spin" size={17} /> : <FileText size={17} />}
@@ -199,7 +199,10 @@ export default function DataManagementDialog({ onClose, onImported }: DataManage
             {result && (
               <div className="data-import-result" role="status">
                 <strong>导入完成</strong>
-                <p>已导入 {result.notes} 篇笔记和 {result.attachments} 个附件{result.renamed > 0 ? `，${result.renamed} 篇因重名已改名` : ''}。</p>
+                <p>
+                  已导入 {result.notes} 篇笔记、{result.attachments} 个附件、{result.books} 本书籍和 {result.annotations} 条批注
+                  {result.renamed > 0 ? `，${result.renamed} 篇因重名已改名` : ''}。
+                </p>
                 {result.warnings.length > 0 && <><span>注意事项</span><ul>{result.warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></>}
               </div>
             )}

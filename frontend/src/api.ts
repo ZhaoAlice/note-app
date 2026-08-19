@@ -1,4 +1,21 @@
-import type { Attachment, Group, NoteDetail, NotePatch, NoteSummary, Tag, User } from './types'
+import type {
+  Attachment,
+  BookAnnotation,
+  BookAnnotationInput,
+  BookDetail,
+  BookFormat,
+  BookPageText,
+  BookReadingState,
+  BookReadingStateInput,
+  BookSearchResult,
+  BookSummary,
+  Group,
+  NoteDetail,
+  NotePatch,
+  NoteSummary,
+  Tag,
+  User,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -131,11 +148,58 @@ export const attachmentsApi = {
   contentUrl: (attachment: Attachment) => attachment.content_url ?? `/api/attachments/${attachment.id}/content`,
 }
 
+export type BookFilters = {
+  q?: string
+  format?: BookFormat
+  sort?: 'recent' | 'uploaded' | 'title'
+}
+
+export type BookPatch = { title?: string; author?: string | null }
+
+export const booksApi = {
+  list: (filters: BookFilters = {}) => {
+    const query = new URLSearchParams()
+    if (filters.q) query.set('q', filters.q)
+    if (filters.format) query.set('format', filters.format)
+    if (filters.sort) query.set('sort', filters.sort)
+    const suffix = query.size ? `?${query}` : ''
+    return request<BookSummary[]>(`/api/books${suffix}`)
+  },
+  get: (id: string) => request<BookDetail>(`/api/books/${id}`),
+  upload: (file: File) => {
+    const body = new FormData()
+    body.set('file', file)
+    return request<BookDetail>('/api/books', { method: 'POST', body })
+  },
+  update: (id: string, patch: BookPatch) => request<BookDetail>(`/api/books/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  remove: (id: string) => request<void>(`/api/books/${id}`, { method: 'DELETE' }),
+  contentUrl: (id: string) => `/api/books/${id}/content`,
+  downloadUrl: (id: string) => `/api/books/${id}/download`,
+  coverUrl: (book: Pick<BookSummary, 'id' | 'cover_url'>) => book.cover_url ?? `/api/books/${book.id}/cover`,
+  updateCover: (id: string, file: File) => {
+    const body = new FormData()
+    body.set('file', file)
+    return request<BookDetail>(`/api/books/${id}/cover`, { method: 'POST', body })
+  },
+  removeCover: (id: string) => request<BookDetail>(`/api/books/${id}/cover`, { method: 'DELETE' }),
+  getState: (id: string) => request<BookReadingState>(`/api/books/${id}/reading-state`),
+  updateState: (id: string, state: BookReadingStateInput, keepalive = false) => request<BookReadingState>(`/api/books/${id}/reading-state`, { method: 'PUT', body: JSON.stringify(state), keepalive }),
+  listAnnotations: (id: string) => request<BookAnnotation[]>(`/api/books/${id}/annotations`),
+  createAnnotation: (id: string, annotation: BookAnnotationInput) => request<BookAnnotation>(`/api/books/${id}/annotations`, { method: 'POST', body: JSON.stringify(annotation) }),
+  updateAnnotation: (id: string, annotationId: string, patch: Partial<BookAnnotationInput>) => request<BookAnnotation>(`/api/books/${id}/annotations/${annotationId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  removeAnnotation: (id: string, annotationId: string) => request<void>(`/api/books/${id}/annotations/${annotationId}`, { method: 'DELETE' }),
+  search: (id: string, query: string) => request<BookSearchResult>(`/api/books/${id}/search?q=${encodeURIComponent(query)}`),
+  getPageText: (id: string, pageIndex: number) => request<BookPageText>(`/api/books/${id}/pages/${pageIndex}/text`),
+  retryOcr: (id: string) => request<BookDetail>(`/api/books/${id}/ocr/retry`, { method: 'POST' }),
+}
+
 export type DataFormat = 'backup' | 'markdown'
 
 export type DataImportResult = {
   notes: number
   attachments: number
+  books: number
+  annotations: number
   renamed: number
   warnings: string[]
 }

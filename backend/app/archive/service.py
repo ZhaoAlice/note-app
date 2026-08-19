@@ -16,15 +16,29 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..config import AppSettings
 from ..content import validate_content
-from ..models import Attachment, Group, Note, Tag, new_id, utcnow
+from ..models import (
+    Attachment,
+    Book,
+    BookAnnotation,
+    BookOcrJob,
+    BookReadingState,
+    BookTextUnit,
+    Group,
+    Note,
+    Tag,
+    new_id,
+    utcnow,
+)
 
 
 ARCHIVE_FORMAT = "note-backup"
-ARCHIVE_VERSION = 1
+ARCHIVE_VERSION = 2
+LEGACY_ARCHIVE_VERSION = 1
 MAX_ARCHIVE_ENTRIES = 10_000
-MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
-MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 5 * 1024 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 10 * 1024 * 1024 * 1024
 MAX_JSON_BYTES = 5 * 1024 * 1024
+MAX_BOOK_JSON_BYTES = 64 * 1024 * 1024
 COPY_CHUNK_BYTES = 1024 * 1024
 INLINE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
@@ -35,12 +49,15 @@ class ImportResult:
     attachments: int
     renamed: int
     warnings: list[str]
+    books: int = 0
+    annotations: int = 0
 
 
 @dataclass(frozen=True)
 class ParsedArchive:
     manifest: dict[str, Any]
     notes: list[dict[str, Any]]
+    books: list[dict[str, Any]]
 
 
 def _datetime_out(value: datetime | None) -> str | None:
@@ -66,6 +83,16 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _model_json(value: str, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(409, f"{label} is invalid") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(409, f"{label} is invalid")
+    return parsed
+
+
 def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
     groups = list(db.scalars(select(Group).where(Group.user_id == user_id).order_by(Group.id)).all())
     tags = list(db.scalars(select(Tag).where(Tag.user_id == user_id).order_by(Tag.id)).all())
@@ -77,9 +104,19 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
             .order_by(Note.id)
         ).unique().all()
     )
+    books = list(
+        db.scalars(
+            select(Book)
+            .options(selectinload(Book.reading_state), selectinload(Book.annotations))
+            .where(Book.user_id == user_id)
+            .order_by(Book.id)
+        ).unique().all()
+    )
     output = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024, mode="w+b")
     note_index: list[dict[str, str]] = []
+    book_index: list[dict[str, str]] = []
     attachment_dir = settings.attachment_path()
+    book_dir = settings.book_path()
     try:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
             for note in notes:
@@ -123,6 +160,72 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                 note_path = f"notes/{note.id}.json"
                 archive.writestr(note_path, note_bytes)
                 note_index.append({"id": note.id, "path": note_path, "sha256": _sha256(note_bytes)})
+            for book in books:
+                source = book_dir / book.storage_name
+                if not source.is_file():
+                    raise HTTPException(409, f"book file is missing: {book.original_name}")
+                extension = Path(book.original_name).suffix.lower() or Path(book.storage_name).suffix.lower()
+                original_path = f"books/{book.id}/original{extension}"
+                actual_hash = _file_sha256(source)
+                if book.sha256 and actual_hash != book.sha256.lower():
+                    raise HTTPException(409, f"book checksum mismatch: {book.original_name}")
+                archive.write(source, original_path)
+                cover_value: dict[str, Any] | None = None
+                if book.cover_storage_name:
+                    cover_source = book_dir / book.cover_storage_name
+                    if not cover_source.is_file():
+                        raise HTTPException(409, f"book cover is missing: {book.title}")
+                    cover_extension = Path(book.cover_storage_name).suffix.lower() or ".img"
+                    cover_path = f"books/{book.id}/cover{cover_extension}"
+                    archive.write(cover_source, cover_path)
+                    cover_value = {
+                        "path": cover_path,
+                        "mime_type": book.cover_mime_type,
+                        "size": cover_source.stat().st_size,
+                        "sha256": _file_sha256(cover_source),
+                    }
+                state_value: dict[str, Any] | None = None
+                if book.reading_state is not None:
+                    state_value = {
+                        "locator": _model_json(book.reading_state.locator, f"book {book.id} reading locator"),
+                        "progress": book.reading_state.progress,
+                        "settings": _model_json(book.reading_state.settings, f"book {book.id} reading settings"),
+                        "last_read_at": _datetime_out(book.reading_state.last_read_at),
+                        "updated_at": _datetime_out(book.reading_state.updated_at),
+                    }
+                annotations = [
+                    {
+                        "id": annotation.id,
+                        "type": annotation.type,
+                        "locator": _model_json(annotation.locator, f"book annotation {annotation.id} locator"),
+                        "color": annotation.color,
+                        "quote": annotation.quote,
+                        "note": annotation.note,
+                        "created_at": _datetime_out(annotation.created_at),
+                        "updated_at": _datetime_out(annotation.updated_at),
+                    }
+                    for annotation in sorted(book.annotations, key=lambda value: value.id)
+                ]
+                book_value = {
+                    "id": book.id,
+                    "title": book.title,
+                    "author": book.author,
+                    "format": book.format,
+                    "original_name": book.original_name,
+                    "size": book.size,
+                    "sha256": actual_hash,
+                    "page_count": book.page_count,
+                    "created_at": _datetime_out(book.created_at),
+                    "updated_at": _datetime_out(book.updated_at),
+                    "file": {"path": original_path, "size": source.stat().st_size, "sha256": actual_hash},
+                    "cover": cover_value,
+                    "reading_state": state_value,
+                    "annotations": annotations,
+                }
+                book_bytes = _json_bytes(book_value)
+                book_path = f"books/{book.id}.json"
+                archive.writestr(book_path, book_bytes)
+                book_index.append({"id": book.id, "path": book_path, "sha256": _sha256(book_bytes)})
             manifest = {
                 "format": ARCHIVE_FORMAT,
                 "version": ARCHIVE_VERSION,
@@ -132,6 +235,7 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                 ],
                 "tags": [{"id": item.id, "name": item.name} for item in tags],
                 "notes": note_index,
+                "books": book_index,
             }
             archive.writestr("manifest.json", _json_bytes(manifest))
         output.seek(0)
@@ -216,6 +320,8 @@ def _validate_zip(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
         path = _safe_path(info.filename, "ZIP entry path")
         if info.is_dir():
             continue
+        if info.flag_bits & 0x1:
+            raise _archive_error(f"backup contains an encrypted file: {path}")
         if path in result:
             raise _archive_error(f"backup contains a duplicate file: {path}")
         total += info.file_size
@@ -230,12 +336,14 @@ def _validate_zip(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
 def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArchive:
     entries = _validate_zip(archive)
     manifest = _checked_json(archive, "manifest.json", "manifest")
-    if manifest.get("format") != ARCHIVE_FORMAT or manifest.get("version") != ARCHIVE_VERSION:
+    version = manifest.get("version")
+    if manifest.get("format") != ARCHIVE_FORMAT or version not in {LEGACY_ARCHIVE_VERSION, ARCHIVE_VERSION}:
         raise _archive_error("unsupported backup format or version")
     _timestamp(manifest.get("exported_at"), "manifest.exported_at")
     groups = _list(manifest.get("groups"), "manifest.groups")
     tags = _list(manifest.get("tags"), "manifest.tags")
     note_index = _list(manifest.get("notes"), "manifest.notes")
+    book_index = _list(manifest.get("books", []), "manifest.books") if version >= 2 else []
     group_ids: set[str] = set()
     tag_ids: set[str] = set()
     for index, raw in enumerate(groups):
@@ -357,10 +465,153 @@ def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArc
                 created_at=_timestamp(attachment.get("created_at"), "attachment.created_at"),
             )
         notes.append(note)
+    books: list[dict[str, Any]] = []
+    book_ids: set[str] = set()
+    annotation_ids: set[str] = set()
+    allowed_formats = {
+        "epub": {".epub"},
+        "pdf": {".pdf"},
+        "txt": {".txt"},
+        "markdown": {".md", ".markdown"},
+        "md": {".md", ".markdown"},
+    }
+    for index, raw in enumerate(book_index):
+        item = _mapping(raw, f"manifest.books[{index}]")
+        book_id = _uuid(item.get("id"), f"manifest.books[{index}].id")
+        if book_id in book_ids:
+            raise _archive_error("backup contains duplicate book IDs")
+        book_ids.add(book_id)
+        path = _safe_path(item.get("path"), f"manifest.books[{index}].path")
+        if path != f"books/{book_id}.json" or path not in entries:
+            raise _archive_error(f"invalid book path: {path}")
+        referenced_paths.add(path)
+        if entries[path].file_size > MAX_BOOK_JSON_BYTES:
+            raise _archive_error(f"book JSON exceeds the size limit: {book_id}")
+        book_bytes = archive.read(path)
+        expected_record_hash = _string(item.get("sha256"), f"manifest.books[{index}].sha256", 64)
+        if len(expected_record_hash) != 64 or _sha256(book_bytes) != expected_record_hash.lower():
+            raise _archive_error(f"book record checksum mismatch: {book_id}")
+        try:
+            book = _mapping(json.loads(book_bytes), f"book {book_id}")
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _archive_error(f"book JSON is invalid: {book_id}") from exc
+        if _uuid(book.get("id"), f"book {book_id}.id") != book_id:
+            raise _archive_error(f"book ID mismatch: {book_id}")
+        book["id"] = book_id
+        book["title"] = _string(book.get("title"), f"book {book_id}.title", 300).strip()
+        author = book.get("author")
+        if author is not None:
+            author = _string(author, f"book {book_id}.author", 300).strip() or None
+        book["author"] = author
+        book_format = _string(book.get("format"), f"book {book_id}.format", 16).lower()
+        if book_format not in allowed_formats:
+            raise _archive_error(f"unsupported book format: {book_format}")
+        book["format"] = "markdown" if book_format == "md" else book_format
+        original_name = Path(_string(book.get("original_name"), f"book {book_id}.original_name", 255)).name
+        if Path(original_name).suffix.lower() not in allowed_formats[book_format]:
+            raise _archive_error(f"book extension does not match its format: {original_name}")
+        book["original_name"] = original_name
+        size = book.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            raise _archive_error(f"book size is invalid: {original_name}")
+        if size > settings.storage.max_book_bytes:
+            raise HTTPException(413, f"book exceeds configured size limit: {original_name}")
+        book["size"] = size
+        book["created_at"] = _timestamp(book.get("created_at"), f"book {book_id}.created_at")
+        book["updated_at"] = _timestamp(book.get("updated_at"), f"book {book_id}.updated_at")
+        page_count = book.get("page_count")
+        if page_count is not None and (not isinstance(page_count, int) or isinstance(page_count, bool) or page_count <= 0):
+            raise _archive_error(f"book page_count is invalid: {original_name}")
+        file_value = _mapping(book.get("file"), f"book {book_id}.file")
+        file_path = _safe_path(file_value.get("path"), f"book {book_id}.file.path")
+        if not file_path.startswith(f"books/{book_id}/") or file_path not in entries:
+            raise _archive_error(f"book file path is invalid: {original_name}")
+        referenced_paths.add(file_path)
+        entry = entries[file_path]
+        if entry.file_size != size:
+            raise _archive_error(f"book size mismatch: {original_name}")
+        expected_hash = _string(file_value.get("sha256"), f"book {book_id}.file.sha256", 64)
+        if _string(book.get("sha256"), f"book {book_id}.sha256", 64).lower() != expected_hash.lower():
+            raise _archive_error(f"book checksum metadata mismatch: {original_name}")
+        book["sha256"] = expected_hash.lower()
+        digest = hashlib.sha256()
+        copied = 0
+        try:
+            with archive.open(entry) as source:
+                while chunk := source.read(COPY_CHUNK_BYTES):
+                    copied += len(chunk)
+                    if copied > settings.storage.max_book_bytes:
+                        raise HTTPException(413, f"book exceeds configured size limit: {original_name}")
+                    digest.update(chunk)
+        except (RuntimeError, zipfile.BadZipFile) as exc:
+            raise _archive_error(f"book data is corrupt: {original_name}") from exc
+        if copied != size or len(expected_hash) != 64 or digest.hexdigest() != expected_hash.lower():
+            raise _archive_error(f"book checksum mismatch: {original_name}")
+        file_value.update(path=file_path, size=size, sha256=expected_hash.lower())
+        cover = book.get("cover")
+        if cover is not None:
+            cover = _mapping(cover, f"book {book_id}.cover")
+            cover_path = _safe_path(cover.get("path"), f"book {book_id}.cover.path")
+            if not cover_path.startswith(f"books/{book_id}/") or cover_path not in entries:
+                raise _archive_error(f"book cover path is invalid: {original_name}")
+            referenced_paths.add(cover_path)
+            cover_mime = _string(cover.get("mime_type"), f"book {book_id}.cover.mime_type", 120).lower()
+            if cover_mime not in INLINE_IMAGE_TYPES:
+                raise _archive_error(f"book cover type is invalid: {original_name}")
+            cover_size = cover.get("size")
+            if (
+                not isinstance(cover_size, int)
+                or isinstance(cover_size, bool)
+                or cover_size <= 0
+                or cover_size > settings.storage.max_cover_bytes
+                or entries[cover_path].file_size != cover_size
+            ):
+                raise _archive_error(f"book cover size is invalid: {original_name}")
+            cover_hash = _string(cover.get("sha256"), f"book {book_id}.cover.sha256", 64)
+            cover_bytes = archive.read(cover_path)
+            if len(cover_hash) != 64 or _sha256(cover_bytes) != cover_hash.lower():
+                raise _archive_error(f"book cover checksum mismatch: {original_name}")
+            cover.update(path=cover_path, mime_type=cover_mime, size=cover_size, sha256=cover_hash.lower())
+        book["cover"] = cover
+        state = book.get("reading_state")
+        if state is not None:
+            state = _mapping(state, f"book {book_id}.reading_state")
+            state["locator"] = _mapping(state.get("locator"), f"book {book_id}.reading_state.locator")
+            state["settings"] = _mapping(state.get("settings"), f"book {book_id}.reading_state.settings")
+            progress = state.get("progress")
+            if not isinstance(progress, (int, float)) or isinstance(progress, bool) or not 0 <= progress <= 1:
+                raise _archive_error(f"book reading progress is invalid: {book_id}")
+            state["progress"] = float(progress)
+            state["last_read_at"] = _timestamp(state.get("last_read_at"), "book reading_state.last_read_at")
+            state["updated_at"] = _timestamp(state.get("updated_at"), "book reading_state.updated_at")
+        book["reading_state"] = state
+        annotations = _list(book.get("annotations", []), f"book {book_id}.annotations")
+        if len(annotations) > 100_000:
+            raise _archive_error(f"book contains too many annotations: {book_id}")
+        for annotation_index, raw_annotation in enumerate(annotations):
+            annotation = _mapping(raw_annotation, f"book {book_id}.annotations[{annotation_index}]")
+            annotation_id = _uuid(annotation.get("id"), f"book {book_id}.annotation.id")
+            if annotation_id in annotation_ids:
+                raise _archive_error("backup contains duplicate annotation IDs")
+            annotation_ids.add(annotation_id)
+            annotation_type = _string(annotation.get("type"), "book annotation.type", 20)
+            if annotation_type not in {"bookmark", "highlight", "underline"}:
+                raise _archive_error(f"book annotation type is invalid: {annotation_id}")
+            annotation["id"] = annotation_id
+            annotation["type"] = annotation_type
+            annotation["locator"] = _mapping(annotation.get("locator"), "book annotation.locator")
+            for field, maximum in (("color", 32), ("quote", 20_000), ("note", 5_000)):
+                value = annotation.get(field)
+                if value is not None:
+                    value = _string(value, f"book annotation.{field}", maximum, allow_empty=True)
+                annotation[field] = value
+            annotation["created_at"] = _timestamp(annotation.get("created_at"), "book annotation.created_at")
+            annotation["updated_at"] = _timestamp(annotation.get("updated_at"), "book annotation.updated_at")
+        books.append(book)
     extras = set(entries) - referenced_paths
     if extras:
         raise _archive_error(f"backup contains unreferenced files: {sorted(extras)[0]}")
-    return ParsedArchive(manifest=manifest, notes=notes)
+    return ParsedArchive(manifest=manifest, notes=notes, books=books)
 
 
 def _unique_id(imported_id: str, used: set[str]) -> str:
@@ -432,6 +683,8 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
         all_model_ids.update(db.scalars(select(Tag.id)).all())
         all_model_ids.update(db.scalars(select(Note.id)).all())
         all_model_ids.update(db.scalars(select(Attachment.id)).all())
+        all_model_ids.update(db.scalars(select(Book.id)).all())
+        all_model_ids.update(db.scalars(select(BookAnnotation.id)).all())
         current_groups = {
             item.normalized_name: item for item in db.scalars(select(Group).where(Group.user_id == user_id)).all()
         }
@@ -462,10 +715,15 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
                 current_tags[normalized] = tag
             tag_map[raw["id"]] = tag
         used_titles = {value.casefold() for value in db.scalars(select(Note.title).where(Note.user_id == user_id)).all()}
+        used_book_titles = {
+            value.casefold() for value in db.scalars(select(Book.title).where(Book.user_id == user_id)).all()
+        }
         attachment_dir = settings.attachment_path()
         attachment_dir.mkdir(parents=True, exist_ok=True)
         renamed = 0
         attachment_count = 0
+        book_count = 0
+        annotation_count = 0
         for raw in parsed.notes:
             title, was_renamed = _unique_title(raw["title"], used_titles)
             renamed += int(was_renamed)
@@ -519,8 +777,151 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
                     )
                 )
                 attachment_count += 1
+        book_dir = settings.book_path()
+        book_dir.mkdir(parents=True, exist_ok=True)
+        from ..book_files import prepare_book_file
+
+        def book_json(value: dict[str, Any]) -> str:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+        for raw in parsed.books:
+            title, was_renamed = _unique_title(raw["title"], used_book_titles)
+            renamed += int(was_renamed)
+            book_id = _unique_id(raw["id"], all_model_ids)
+            suffix = Path(raw["original_name"]).suffix.lower()
+            token = uuid.uuid4().hex
+            storage_name = f"{token}{suffix}"
+            reader_storage_name = f"{token}.reader{suffix}"
+            target = book_dir / storage_name
+            reader_target = book_dir / reader_storage_name
+            temp_target = book_dir / f".{token}.import.part"
+            temp_reader = book_dir / f".{token}.reader.part"
+            try:
+                with archive.open(raw["file"]["path"]) as archive_file, temp_target.open("xb") as destination:
+                    copied = 0
+                    while chunk := archive_file.read(COPY_CHUNK_BYTES):
+                        copied += len(chunk)
+                        if copied > settings.storage.max_book_bytes:
+                            raise HTTPException(413, "book exceeds configured size limit")
+                        destination.write(chunk)
+                prepared = prepare_book_file(
+                    temp_target,
+                    raw["original_name"],
+                    temp_reader,
+                    settings.storage.max_book_bytes,
+                    settings.storage.max_cover_bytes,
+                )
+                temp_target.replace(target)
+                temp_reader.replace(reader_target)
+            except Exception:
+                temp_target.unlink(missing_ok=True)
+                temp_reader.unlink(missing_ok=True)
+                target.unlink(missing_ok=True)
+                reader_target.unlink(missing_ok=True)
+                raise
+            created_files.extend([target, reader_target])
+            cover_storage_name: str | None = None
+            cover_mime_type: str | None = None
+            if raw["cover"] is not None:
+                cover_mime_type = raw["cover"]["mime_type"]
+                cover_extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}[
+                    cover_mime_type
+                ]
+                cover_storage_name = f"{token}.cover{cover_extension}"
+                cover_target = book_dir / cover_storage_name
+                try:
+                    with archive.open(raw["cover"]["path"]) as archive_file, cover_target.open("xb") as destination:
+                        copied = 0
+                        while chunk := archive_file.read(COPY_CHUNK_BYTES):
+                            copied += len(chunk)
+                            if copied > settings.storage.max_cover_bytes:
+                                raise HTTPException(413, "book cover exceeds configured size limit")
+                            destination.write(chunk)
+                except Exception:
+                    cover_target.unlink(missing_ok=True)
+                    raise
+                created_files.append(cover_target)
+                if not _valid_inline_image(cover_target, cover_mime_type):
+                    raise _archive_error(f"book cover content is invalid: {raw['original_name']}")
+            elif prepared.cover_bytes and prepared.cover_mime_type:
+                cover_mime_type = prepared.cover_mime_type
+                cover_extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[cover_mime_type]
+                cover_storage_name = f"{token}.cover{cover_extension}"
+                cover_target = book_dir / cover_storage_name
+                cover_target.write_bytes(prepared.cover_bytes)
+                created_files.append(cover_target)
+            book = Book(
+                id=book_id,
+                user_id=user_id,
+                title=title,
+                author=raw["author"],
+                format=raw["format"],
+                original_name=raw["original_name"],
+                storage_name=storage_name,
+                reader_storage_name=reader_storage_name,
+                cover_storage_name=cover_storage_name,
+                cover_mime_type=cover_mime_type,
+                sha256=raw["sha256"],
+                size=raw["size"],
+                page_count=raw["page_count"] or prepared.page_count,
+                search_text=prepared.search_text,
+                created_at=raw["created_at"],
+                updated_at=raw["updated_at"],
+            )
+            for unit in prepared.text_units:
+                book.text_units.append(
+                    BookTextUnit(
+                        unit_index=unit["unit_index"],
+                        locator=book_json(unit["locator"]),
+                        text=unit["text"],
+                        boxes=None,
+                        source=unit["source"],
+                        label=unit["label"],
+                    )
+                )
+            state = raw["reading_state"]
+            if state is not None:
+                book.reading_state = BookReadingState(
+                    locator=book_json(state["locator"]),
+                    progress=state["progress"],
+                    settings=book_json(state["settings"]),
+                    last_read_at=state["last_read_at"],
+                    updated_at=state["updated_at"],
+                )
+            else:
+                book.reading_state = BookReadingState(locator="{}", progress=0.0, settings="{}")
+            for raw_annotation in raw["annotations"]:
+                annotation_id = _unique_id(raw_annotation["id"], all_model_ids)
+                book.annotations.append(
+                    BookAnnotation(
+                        id=annotation_id,
+                        type=raw_annotation["type"],
+                        locator=book_json(raw_annotation["locator"]),
+                        color=raw_annotation["color"],
+                        quote=raw_annotation["quote"],
+                        note=raw_annotation["note"],
+                        created_at=raw_annotation["created_at"],
+                        updated_at=raw_annotation["updated_at"],
+                    )
+                )
+                annotation_count += 1
+            if raw["format"] == "pdf":
+                book.ocr_job = BookOcrJob(status="queued", pages_total=book.page_count or 0, pages_done=0)
+            db.add(book)
+            book_count += 1
         db.commit()
-        return ImportResult(notes=len(parsed.notes), attachments=attachment_count, renamed=renamed, warnings=[])
+        if any(book["format"] == "pdf" for book in parsed.books):
+            from ..book_ocr import wake_ocr_worker
+
+            wake_ocr_worker()
+        return ImportResult(
+            notes=len(parsed.notes),
+            attachments=attachment_count,
+            renamed=renamed,
+            warnings=[],
+            books=book_count,
+            annotations=annotation_count,
+        )
     except HTTPException:
         db.rollback()
         for path in created_files:
