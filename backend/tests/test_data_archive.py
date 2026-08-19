@@ -53,7 +53,8 @@ def test_backup_export_and_non_overwriting_import_round_trip(client):
     with zipfile.ZipFile(BytesIO(exported.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["format"] == "note-backup"
-        assert manifest["version"] == 1
+        assert manifest["version"] == 2
+        assert manifest["books"] == []
         assert len(manifest["groups"]) == len(manifest["tags"]) == len(manifest["notes"]) == 1
         note_record = json.loads(archive.read(manifest["notes"][0]["path"]))
         assert note_record["content"] == content
@@ -66,7 +67,14 @@ def test_backup_export_and_non_overwriting_import_round_trip(client):
         files={"file": ("backup.zip", BytesIO(exported.content), "application/zip")},
     )
     assert imported.status_code == 200, imported.text
-    assert imported.json() == {"notes": 1, "attachments": 1, "renamed": 1, "warnings": []}
+    assert imported.json() == {
+        "notes": 1,
+        "attachments": 1,
+        "books": 0,
+        "annotations": 0,
+        "renamed": 1,
+        "warnings": [],
+    }
     notes = client.get("/api/notes").json()
     assert {item["title"] for item in notes} == {"图片笔记", "图片笔记（导入）"}
     imported_summary = next(item for item in notes if item["title"] == "图片笔记（导入）")
@@ -104,6 +112,65 @@ def test_backup_export_contains_only_current_user_data(client):
         assert len(manifest["notes"]) == 1
         note = json.loads(archive.read(manifest["notes"][0]["path"]))
         assert note["title"] == "Bob 私有"
+
+
+def test_backup_v2_round_trips_book_file_state_coverless_metadata_and_annotations(client):
+    register(client)
+    headers = csrf_headers(client)
+    original = "第一章\n这是需要备份的正文。".encode("utf-8")
+    uploaded = client.post(
+        "/api/books",
+        headers=headers,
+        files={"file": ("阅读材料.txt", BytesIO(original), "text/plain")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    book = uploaded.json()
+    state_body = {
+        "locator": {"kind": "text", "start": 3, "end": 8, "quote": "这是需要"},
+        "progress": 0.4,
+        "font_size": 115,
+        "font_family": "serif",
+        "line_height": 1.8,
+        "theme": "dark",
+        "layout": "scrolled",
+    }
+    assert client.put(f"/api/books/{book['id']}/reading-state", headers=headers, json=state_body).status_code == 200
+    annotation_body = {
+        "type": "highlight",
+        "locator": {"kind": "text", "start": 3, "end": 8, "quote": "这是需要"},
+        "color": "yellow",
+        "quote": "这是需要",
+        "note": "备份批注",
+    }
+    assert client.post(f"/api/books/{book['id']}/annotations", headers=headers, json=annotation_body).status_code == 201
+
+    exported = client.get("/api/data/export", params={"format": "backup"})
+    assert exported.status_code == 200, exported.text
+    with zipfile.ZipFile(BytesIO(exported.content)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["version"] == 2 and len(manifest["books"]) == 1
+        record = json.loads(archive.read(manifest["books"][0]["path"]))
+        assert archive.read(record["file"]["path"]) == original
+        assert record["reading_state"]["progress"] == 0.4
+        assert record["annotations"][0]["note"] == "备份批注"
+
+    assert client.delete(f"/api/books/{book['id']}", headers=headers).status_code == 204
+    imported = client.post(
+        "/api/data/import",
+        params={"format": "backup"},
+        headers=headers,
+        files={"file": ("backup-v2.zip", BytesIO(exported.content), "application/zip")},
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["books"] == 1
+    assert imported.json()["annotations"] == 1
+    restored = client.get("/api/books").json()
+    assert len(restored) == 1 and restored[0]["title"] == "阅读材料"
+    assert client.get(restored[0]["download_url"]).content == original
+    state = client.get(f"/api/books/{restored[0]['id']}/reading-state").json()
+    assert state["progress"] == 0.4 and state["theme"] == "dark"
+    annotations = client.get(f"/api/books/{restored[0]['id']}/annotations").json()
+    assert annotations[0]["note"] == "备份批注"
 
 
 def test_backup_import_rejects_unsafe_paths(client):

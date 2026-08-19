@@ -2,7 +2,7 @@
 
 拾笺是一个使用 FastAPI、React 和 Tiptap 构建的多用户富文本记事本。应用默认使用 SQLite，也可通过配置切换到 MySQL 或 PostgreSQL。
 
-项目包含完整的认证、笔记管理、一级分组、标签、搜索、自动保存、回收站、附件、数据导入导出、三套界面主题，以及 Windows/Linux 开发和部署脚本。
+项目包含完整的认证、笔记管理、一级分组、标签、搜索、自动保存、回收站、附件、数据导入导出、独立电子书架、深度阅读与本地 PDF OCR、三套界面主题，以及 Windows/Linux 开发和部署脚本。
 
 技术决策、交付范围和验收记录见 [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)。
 
@@ -48,10 +48,21 @@
 - Markdown 使用 YAML front matter 保存标题、标签、分组和时间；相对图片会作为附件导入，远程图片不会由服务器主动下载。
 - 导入不会覆盖已有笔记；同名笔记自动添加“（导入）”及序号，同名分组和标签复用现有数据。
 
+### 书架与阅读
+
+- 独立书架支持上传并在线阅读 EPUB、PDF、TXT、Markdown；单本默认上限为 250 MiB。
+- 自动提取书名、作者和可用封面，也可手动修改书名、作者及封面。
+- 支持书内搜索、目录或页码跳转、分页/连续滚动、字号、字体、行距和主题设置。
+- 阅读进度、书签、高亮、下划线与文字批注保存到当前账号，可跨设备继续阅读。
+- 扫描 PDF 上传后由本地 RapidOCR 后台识别；识别期间仍可阅读，失败时可手动重试。
+- 加密 PDF、DRM EPUB 和 MOBI/AZW3/FB2/CBZ 暂不支持；删除书籍会同时永久删除阅读数据。
+- 完整备份 ZIP 包含书籍原件、当前封面、元数据、阅读进度和批注；OCR 缓存会在恢复后重新生成。
+
 ## 技术栈
 
 - 后端：Python 3.12、FastAPI、SQLAlchemy 2、Alembic、Pydantic、pytest
-- 前端：Vite、React 19、TypeScript、TanStack Query、Tiptap、Lucide React
+- 前端：Vite、React 19、TypeScript、TanStack Query、Tiptap、EPUB.js、PDF.js、React PDF、React Markdown、Lucide React
+- 本地文档处理：RapidOCR、ONNX Runtime、PDFium、pypdf
 - 测试与检查：pytest、Vitest、React Testing Library、ESLint、TypeScript
 - 数据库：SQLite（默认）、MySQL 8+、PostgreSQL 14+
 
@@ -158,6 +169,7 @@ MySQL 建议使用 InnoDB 和 `utf8mb4`。切换到新的空数据库后执行 A
 | `server` | 监听地址、端口、调试模式、可信来源、前端构建目录 |
 | `database` | 数据库 URL、连接池与 SQL 日志 |
 | `storage` | 上传目录和单文件大小限制 |
+| `ocr` | 本地 OCR 开关、模型目录和 worker 并发数 |
 | `security` | 会话、CSRF Cookie、有效期、Secure 标志和密码迭代次数 |
 
 ### 附件存储路径
@@ -196,6 +208,23 @@ export NOTE_STORAGE__ATTACHMENT_DIR=/srv/note-app/attachments
 ```
 
 应用启动时会自动创建该目录，运行应用的系统用户必须具有读写权限。修改路径不会自动搬迁已有附件：请先停止服务，将旧目录中的文件复制到新目录，再修改配置并重新启动。
+
+### 书籍与 OCR 存储
+
+书籍原件、安全阅读副本和封面默认保存在 `backend/data/books`。OCR 模型默认保存在 `backend/data/ocr-models`：
+
+```yaml
+storage:
+  book_dir: ./data/books
+  max_book_bytes: 262144000
+  max_cover_bytes: 5242880
+ocr:
+  enabled: true
+  model_dir: ./data/ocr-models
+  concurrency: 1
+```
+
+`setup` 脚本会安装 CPU 版 ONNX Runtime 并准备 OCR 模型，之后识别过程不调用外部 OCR 服务。修改 `book_dir` 不会自动搬迁已有书籍；迁移方式与附件目录相同。
 
 ### 允许上传的文件类型
 
@@ -278,7 +307,7 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-当前验收基线：后端 35 项 pytest、前端 35 项 Vitest 全部通过，ESLint 和生产构建通过。
+当前验收基线：后端 44 项 pytest、前端 52 项 Vitest 全部通过，ESLint 和生产构建通过。
 
 如需对 MySQL 或 PostgreSQL 运行同一套迁移与集成测试，可配置专用空测试库：
 
@@ -332,4 +361,4 @@ FastAPI 会在 <http://localhost:8000> 同时提供前端静态资源和 `/api`�
 
 ## 当前边界
 
-当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、分页、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。
+当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、书籍 DRM/加密文件、手写批注、书架分类、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。

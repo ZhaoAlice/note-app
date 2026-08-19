@@ -69,7 +69,14 @@ def test_markdown_export_and_import_round_trip_with_relative_image(client):
         files={"file": ("notes.zip", BytesIO(exported.content), "application/zip")},
     )
     assert imported.status_code == 200, imported.text
-    assert imported.json() == {"notes": 1, "attachments": 1, "renamed": 1, "warnings": []}
+    assert imported.json() == {
+        "notes": 1,
+        "attachments": 1,
+        "books": 0,
+        "annotations": 0,
+        "renamed": 1,
+        "warnings": [],
+    }
     imported_note = next(item for item in client.get("/api/notes").json() if item["title"].endswith("（导入）"))
     detail = client.get(f"/api/notes/{imported_note['id']}").json()
     assert detail["group"]["id"] == group["id"]
@@ -163,7 +170,14 @@ def test_markdown_zip_uses_h1_title_top_directory_group_and_relative_image(clien
         files={"file": ("travel.zip", archive, "application/zip")},
     )
     assert response.status_code == 200, response.text
-    assert response.json() == {"notes": 1, "attachments": 1, "renamed": 0, "warnings": []}
+    assert response.json() == {
+        "notes": 1,
+        "attachments": 1,
+        "books": 0,
+        "annotations": 0,
+        "renamed": 0,
+        "warnings": [],
+    }
     note = client.get("/api/notes").json()[0]
     assert note["title"] == "山中照片"
     assert note["group"]["name"] == "旅行"

@@ -35,6 +35,7 @@ import ConfirmDialog from './ConfirmDialog'
 import DataManagementDialog from './DataManagementDialog'
 import EmptyState from './EmptyState'
 import NoteEditor from './NoteEditor'
+import AppNavigation from './AppNavigation'
 
 type PendingAction =
   | { type: 'delete-group'; id: string; name: string }
@@ -482,6 +483,7 @@ export default function NotebookPage({ user }: { user: User }) {
           </div>
         )}
         <div className="rail-brand"><BookOpenText size={23} /><span>拾笺</span></div>
+        <AppNavigation />
         <nav aria-label="笔记分类">
           <button className={status === 'active' && !selectedGroup ? 'active' : ''} onClick={() => switchStatus('active')}><FileText size={18} /><span>全部笔记</span></button>
           <button className={status === 'trash' ? 'active' : ''} onClick={() => switchStatus('trash')}><Trash2 size={18} /><span>回收站</span></button>
@@ -715,6 +717,7 @@ export default function NotebookPage({ user }: { user: User }) {
               queryClient.invalidateQueries({ queryKey: ['notes'] }),
               queryClient.invalidateQueries({ queryKey: ['tags'] }),
               queryClient.invalidateQueries({ queryKey: ['groups'] }),
+              queryClient.invalidateQueries({ queryKey: ['books'] }),
             ])
           }}
         />

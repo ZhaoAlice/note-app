@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("NOTE_SECURITY__PBKDF2_ITERATIONS", "100000")
+os.environ.setdefault("NOTE_OCR__ENABLED", "false")
 
 from app.config import get_settings
 from app.database import Base, get_db
@@ -37,7 +38,9 @@ def client(tmp_path: Path):
         Base.metadata.create_all(engine)
     settings = get_settings()
     previous_attachment_dir = settings.storage.attachment_dir
+    previous_book_dir = settings.storage.book_dir
     settings.storage.attachment_dir = str(tmp_path / "uploads")
+    settings.storage.book_dir = str(tmp_path / "books")
 
     def override_db():
         with TestingSession() as db:
@@ -48,6 +51,7 @@ def client(tmp_path: Path):
         yield test_client
     app.dependency_overrides.clear()
     settings.storage.attachment_dir = previous_attachment_dir
+    settings.storage.book_dir = previous_book_dir
     if alembic_config is not None:
         command.downgrade(alembic_config, "base")
     else:

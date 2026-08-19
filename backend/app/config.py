@@ -61,14 +61,24 @@ class StorageSettings(BaseModel):
 
     attachment_dir: str = "./data/uploads"
     max_file_bytes: int = 10 * 1024 * 1024
+    book_dir: str = "./data/books"
+    max_book_bytes: int = 250 * 1024 * 1024
+    max_cover_bytes: int = 5 * 1024 * 1024
     allowed_types: dict[str, list[str]] = Field(default_factory=default_allowed_attachment_types)
 
-    @field_validator("attachment_dir")
+    @field_validator("attachment_dir", "book_dir")
     @classmethod
-    def attachment_directory_is_not_blank(cls, value: str) -> str:
+    def storage_directory_is_not_blank(cls, value: str) -> str:
         value = value.strip()
         if not value:
-            raise ValueError("storage.attachment_dir cannot be blank")
+            raise ValueError("storage directory cannot be blank")
+        return value
+
+    @field_validator("max_book_bytes", "max_cover_bytes")
+    @classmethod
+    def storage_limits_are_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("storage size limits must be positive")
         return value
 
     @field_validator("allowed_types")
@@ -107,11 +117,35 @@ class SecuritySettings(BaseModel):
         return value
 
 
+class OcrSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    model_dir: str = "./data/ocr-models"
+    concurrency: int = 1
+
+    @field_validator("model_dir")
+    @classmethod
+    def model_directory_is_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("ocr.model_dir cannot be blank")
+        return value
+
+    @field_validator("concurrency")
+    @classmethod
+    def concurrency_is_supported(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("ocr.concurrency currently supports exactly one worker per process")
+        return value
+
+
 class AppSettings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    ocr: OcrSettings = Field(default_factory=OcrSettings)
 
     def resolve_path(self, value: str) -> Path:
         path = Path(value).expanduser()
@@ -119,6 +153,9 @@ class AppSettings(BaseModel):
 
     def attachment_path(self) -> Path:
         return self.resolve_path(self.storage.attachment_dir)
+
+    def book_path(self) -> Path:
+        return self.resolve_path(self.storage.book_dir)
 
 
 def _merge(target: dict[str, Any], source: dict[str, Any]) -> None:

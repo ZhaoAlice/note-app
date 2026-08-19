@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
@@ -134,4 +134,162 @@ class NoteSummary(BaseModel):
     is_pinned: bool
     deleted_at: UtcDateTime | None
     created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
+BookFormat = Literal["epub", "pdf", "txt", "md", "markdown"]
+AnnotationType = Literal["bookmark", "highlight", "underline"]
+
+
+class EpubBookLocation(BaseModel):
+    kind: Literal["epub"]
+    cfi: str
+    href: str | None = None
+    end_cfi: str | None = None
+
+
+class PdfBookRect(BaseModel):
+    left: float
+    top: float
+    width: float
+    height: float
+
+
+class PdfBookLocation(BaseModel):
+    kind: Literal["pdf"]
+    page_index: int = Field(ge=0)
+    rects: list[PdfBookRect] | None = None
+
+
+class TextBookLocation(BaseModel):
+    kind: Literal["text"]
+    start: int = Field(ge=0)
+    end: int | None = Field(default=None, ge=0)
+    quote: str | None = None
+
+
+BookLocation = Annotated[EpubBookLocation | PdfBookLocation | TextBookLocation, Field(discriminator="kind")]
+
+
+class BookUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    author: str | None = Field(default=None, max_length=300)
+
+    @field_validator("title")
+    @classmethod
+    def clean_book_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("book title cannot be blank")
+        return value
+
+    @field_validator("author")
+    @classmethod
+    def clean_book_author(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class BookSummary(BaseModel):
+    id: str
+    title: str
+    author: str | None
+    format: BookFormat
+    size: int
+    page_count: int | None
+    cover_url: str | None
+    content_url: str
+    download_url: str
+    progress: float
+    last_read_at: UtcDateTime | None
+    ocr_status: Literal["queued", "running", "completed", "failed"] | None
+    ocr_progress: float | None
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
+class BookDetail(BookSummary):
+    ocr_error: str | None
+
+
+BookOut = BookDetail
+
+
+class ReadingStateUpdate(BaseModel):
+    locator: BookLocation | None = None
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    font_size: float = Field(default=100.0, ge=50.0, le=300.0)
+    line_height: float = Field(default=1.6, ge=1.0, le=3.0)
+    font_family: str = Field(default="system", max_length=80)
+    theme: str = Field(default="warm", max_length=40)
+    layout: str = Field(default="paginated", max_length=40)
+
+
+class ReadingStateOut(ReadingStateUpdate):
+    book_id: str
+    last_read_at: UtcDateTime | None
+    updated_at: UtcDateTime | None
+
+
+class AnnotationCreate(BaseModel):
+    type: AnnotationType
+    locator: BookLocation
+    color: str | None = Field(default=None, max_length=32)
+    quote: str | None = Field(default=None, max_length=20_000)
+    note: str | None = Field(default=None, max_length=5_000)
+
+
+class AnnotationUpdate(BaseModel):
+    type: AnnotationType | None = None
+    locator: BookLocation | None = None
+    color: str | None = Field(default=None, max_length=32)
+    quote: str | None = Field(default=None, max_length=20_000)
+    note: str | None = Field(default=None, max_length=5_000)
+
+
+class AnnotationOut(AnnotationCreate):
+    id: str
+    book_id: str
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
+class BookSearchItem(BaseModel):
+    unit_index: int
+    locator: BookLocation
+    label: str | None
+    source: str | None
+    excerpt: str
+
+
+class BookSearchOut(BaseModel):
+    items: list[BookSearchItem]
+    index_complete: bool
+
+
+class BookOcrTextBox(BaseModel):
+    text: str
+    score: float = Field(ge=0.0, le=1.0)
+    left: float = Field(ge=0.0, le=100.0)
+    top: float = Field(ge=0.0, le=100.0)
+    width: float = Field(ge=0.0, le=100.0)
+    height: float = Field(ge=0.0, le=100.0)
+
+
+class BookPageTextOut(BaseModel):
+    page_index: int
+    source: str
+    text: str
+    boxes: list[BookOcrTextBox]
+
+
+class BookOcrOut(BaseModel):
+    book_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    pages_total: int
+    pages_done: int
+    error: str | None
     updated_at: UtcDateTime

@@ -35,7 +35,7 @@ describe('DataManagementDialog', () => {
 
   it('确认文件和格式后导入，并展示数量、重命名和警告', async () => {
     const onImported = vi.fn()
-    importData.mockResolvedValue({ notes: 3, attachments: 2, renamed: 1, warnings: ['远程图片未下载'] })
+    importData.mockResolvedValue({ notes: 3, attachments: 2, books: 2, annotations: 4, renamed: 1, warnings: ['远程图片未下载'] })
     render(<DataManagementDialog onClose={vi.fn()} onImported={onImported} />)
     const dialog = screen.getByRole('dialog', { name: '数据管理' })
 
@@ -48,7 +48,7 @@ describe('DataManagementDialog', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '确认导入' }))
     await waitFor(() => expect(importData).toHaveBeenCalledWith('markdown', file))
     expect(await within(dialog).findByText('导入完成')).toBeInTheDocument()
-    expect(within(dialog).getByText(/已导入 3 篇笔记和 2 个附件，1 篇因重名已改名/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/已导入 3 篇笔记、2 个附件、2 本书籍和 4 条批注.*1 篇因重名已改名/)).toBeInTheDocument()
     expect(within(dialog).getByText('远程图片未下载')).toBeInTheDocument()
     expect(onImported).toHaveBeenCalledOnce()
   })

@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from .content import extract_text
-from .models import Attachment, Note
-from .schemas import AttachmentOut, GroupOut, NoteDetail, NoteSummary, TagOut
+from .models import Attachment, Book, BookAnnotation, BookOcrJob, BookReadingState, Note
+from .schemas import (
+    AnnotationOut,
+    AttachmentOut,
+    BookOcrOut,
+    BookDetail,
+    GroupOut,
+    NoteDetail,
+    NoteSummary,
+    ReadingStateOut,
+    TagOut,
+)
 
 
 def attachment_out(item: Attachment) -> AttachmentOut:
@@ -44,4 +55,81 @@ def note_summary(note: Note) -> NoteSummary:
         deleted_at=note.deleted_at,
         created_at=note.created_at,
         updated_at=note.updated_at,
+    )
+
+
+def _json_value(value: str) -> Any:
+    try:
+        loaded = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return loaded
+
+
+def book_out(book: Book) -> BookDetail:
+    state = book.reading_state
+    job = book.ocr_job
+    ocr_status = job.status if job else None
+    ocr_progress = None
+    if job:
+        ocr_progress = job.pages_done / job.pages_total if job.pages_total else 0.0
+    return BookDetail(
+        id=book.id,
+        title=book.title,
+        author=book.author,
+        format=book.format,
+        size=book.size,
+        page_count=book.page_count,
+        cover_url=f"/api/books/{book.id}/cover" if book.cover_storage_name else None,
+        content_url=f"/api/books/{book.id}/content",
+        download_url=f"/api/books/{book.id}/download",
+        progress=state.progress if state else 0.0,
+        last_read_at=state.last_read_at if state else None,
+        ocr_status=ocr_status,
+        ocr_progress=ocr_progress,
+        ocr_error=job.error if job else None,
+        created_at=book.created_at,
+        updated_at=book.updated_at,
+    )
+
+
+def reading_state_out(state: BookReadingState) -> ReadingStateOut:
+    settings_value = _json_value(state.settings)
+    settings = settings_value if isinstance(settings_value, dict) else {}
+    return ReadingStateOut(
+        book_id=state.book_id,
+        locator=_json_value(state.locator),
+        progress=state.progress,
+        font_size=settings.get("font_size", 100.0),
+        line_height=settings.get("line_height", 1.6),
+        font_family=settings.get("font_family", "system"),
+        theme=settings.get("theme", "warm"),
+        layout=settings.get("layout", "paginated"),
+        last_read_at=state.last_read_at,
+        updated_at=state.updated_at,
+    )
+
+
+def annotation_out(annotation: BookAnnotation) -> AnnotationOut:
+    return AnnotationOut(
+        id=annotation.id,
+        book_id=annotation.book_id,
+        type=annotation.type,
+        locator=_json_value(annotation.locator),
+        color=annotation.color,
+        quote=annotation.quote,
+        note=annotation.note,
+        created_at=annotation.created_at,
+        updated_at=annotation.updated_at,
+    )
+
+
+def ocr_out(job: BookOcrJob) -> BookOcrOut:
+    return BookOcrOut(
+        book_id=job.book_id,
+        status=job.status,
+        pages_total=job.pages_total,
+        pages_done=job.pages_done,
+        error=job.error,
+        updated_at=job.updated_at,
     )

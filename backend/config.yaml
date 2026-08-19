@@ -17,6 +17,9 @@ storage:
   # Windows 绝对路径建议使用正斜杠，例如 D:/note-data/attachments。
   attachment_dir: ./data/uploads
   max_file_bytes: 10485760
+  book_dir: ./data/books
+  max_book_bytes: 262144000
+  max_cover_bytes: 5242880
   # MIME 类型对应允许的文件扩展名；删除条目即可禁用该类型。
   allowed_types:
     image/jpeg: [.jpg, .jpeg]
@@ -34,6 +37,10 @@ storage:
     application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: [.xlsx]
     application/vnd.ms-powerpoint: [.ppt]
     application/vnd.openxmlformats-officedocument.presentationml.presentation: [.pptx]
+ocr:
+  enabled: true
+  model_dir: ./data/ocr-models
+  concurrency: 1
 security:
   session_cookie: note_session
   csrf_cookie: note_csrf
