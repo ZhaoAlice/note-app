@@ -25,17 +25,27 @@
 .rail > .app-mode-nav {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  margin: 0 10px 13px;
-  padding: 4px;
+  margin: 2px 8px 8px;
+  padding: 2px;
   border: 1px solid var(--nav-divider);
-  border-radius: 11px;
+  border-radius: 9px;
 }
 
-.rail > .app-mode-nav a { color: var(--nav-text); min-height: 34px; padding: 0 7px; }
+.rail > .app-mode-nav a {
+  min-width: 0;
+  min-height: 28px;
+  gap: 4px;
+  padding: 0 5px;
+  border-radius: 7px;
+  color: var(--nav-text);
+  font-size: .75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
 .rail > .app-mode-nav a:hover { color: var(--nav-hover-text); background: var(--nav-hover-bg); }
 .rail > .app-mode-nav a.active { color: var(--nav-title); background: var(--nav-hover-bg); }
 .rail.collapsed > .app-mode-nav { display: none; }
-.rail > .app-mode-nav + nav { margin-top: 18px; }
+.rail > .app-mode-nav + nav { margin-top: 10px; }
 
 .book-library-shell {
   min-height: 100vh;
@@ -219,12 +229,13 @@
   .rail > .app-mode-nav {
     display: flex;
     flex-direction: column;
-    margin: 12px 0 0;
+    gap: 3px;
+    margin: 8px 0 0;
     padding: 0;
     border: 0;
   }
-  .rail > .app-mode-nav a { width: 40px; min-height: 38px; padding: 0; }
-  .rail > .app-mode-nav + nav { margin-top: 14px; }
+  .rail > .app-mode-nav a { width: 32px; min-height: 32px; padding: 0; }
+  .rail > .app-mode-nav + nav { margin-top: 9px; }
 }
 
 @media (max-width: 460px) {

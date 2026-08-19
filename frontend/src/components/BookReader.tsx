@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
@@ -69,6 +69,29 @@ function formatProgress(progress: number): string {
 
 function ReaderLoading() {
   return <div className="reader-adapter-message"><LoaderCircle className="spin" size={20} /> 正在加载阅读器…</div>
+}
+
+class ReaderErrorBoundary extends Component<{
+  children: ReactNode
+  onBack: () => void
+}, { error: Error | null }> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="reader-adapter-error" role="alert">
+        <BookOpen size={28} />
+        <strong>PDF 阅读器加载失败</strong>
+        <p>{this.state.error.message || '当前浏览器无法加载阅读组件。'}</p>
+        <button className="button" onClick={this.props.onBack} type="button">返回书架</button>
+      </div>
+    )
+  }
 }
 
 function AnnotationDraft({
@@ -339,12 +362,14 @@ export default function BookReader({ user }: { user: User }) {
       )}
 
       <section className="reader-stage" aria-label={`${currentBook.title}正文`}>
-        <Suspense fallback={<ReaderLoading />}>
-          {currentBook.format === 'epub' && <EpubReader {...adapterProps} />}
-          {currentBook.format === 'pdf' && <PdfReader {...adapterProps} />}
-          {currentBook.format === 'txt' && <TextReader {...adapterProps} />}
-          {(currentBook.format === 'md' || currentBook.format === 'markdown') && <MarkdownReader {...adapterProps} />}
-        </Suspense>
+        <ReaderErrorBoundary key={`${bookId}-${currentBook.format}`} onBack={() => navigate('/books')}>
+          <Suspense fallback={<ReaderLoading />}>
+            {currentBook.format === 'epub' && <EpubReader {...adapterProps} />}
+            {currentBook.format === 'pdf' && <PdfReader {...adapterProps} />}
+            {currentBook.format === 'txt' && <TextReader {...adapterProps} />}
+            {(currentBook.format === 'md' || currentBook.format === 'markdown') && <MarkdownReader {...adapterProps} />}
+          </Suspense>
+        </ReaderErrorBoundary>
       </section>
 
       {sidebar && (
