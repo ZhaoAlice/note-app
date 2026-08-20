@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, '..', '..')
-const outputRoot = resolve(repoRoot, 'desktop', 'out', 'make')
+const rootArgument = process.argv.indexOf('--root')
+const outputRoot = rootArgument >= 0 && process.argv[rootArgument + 1]
+  ? resolve(process.argv[rootArgument + 1])
+  : resolve(repoRoot, 'desktop', 'out', 'make')
 
 async function filesUnder(directory) {
   const result = []

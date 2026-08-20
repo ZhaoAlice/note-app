@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import zipfile
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ CSS_REMOTE = re.compile(
 )
 EPUB_CONTAINER_NS = {"container": "urn:oasis:names:tc:opendocument:xmlns:container"}
 OPF_NS = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
+SUPPORTED_BOOK_FORMATS = {"epub", "pdf", "txt", "md", "markdown"}
 
 
 @dataclass
@@ -33,6 +36,62 @@ class PreparedBook:
     text_units: list[dict[str, Any]]
     cover_bytes: bytes | None = None
     cover_mime_type: str | None = None
+
+
+@dataclass(frozen=True)
+class LocalBookSource:
+    path: Path
+    original_name: str
+    format: str
+    size: int
+    sha256: str
+    mtime_ns: int
+    path_hash: str
+
+
+def inspect_local_book_source(raw_path: str, max_book_bytes: int) -> LocalBookSource:
+    """Resolve and validate a desktop-authorized local book path."""
+    try:
+        path = Path(raw_path).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(404, "source book file not found") from exc
+    if not path.is_file():
+        raise HTTPException(422, "source book path must be a regular file")
+    original_name = path.name[:255]
+    book_format = path.suffix.lower().removeprefix(".")
+    if book_format not in SUPPORTED_BOOK_FORMATS:
+        raise HTTPException(422, "unsupported book format")
+    try:
+        before = path.stat()
+        if before.st_size <= 0:
+            raise HTTPException(422, "book file is empty")
+        if before.st_size > max_book_bytes:
+            raise HTTPException(413, "book exceeds configured size limit")
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_book_bytes:
+                    raise HTTPException(413, "book exceeds configured size limit")
+                digest.update(chunk)
+        after = path.stat()
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(404, "source book file not found") from exc
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or size != after.st_size:
+        raise HTTPException(409, "source book changed while it was being read")
+    normalized_path = os.path.normcase(str(path))
+    return LocalBookSource(
+        path=path,
+        original_name=original_name,
+        format=book_format,
+        size=size,
+        sha256=digest.hexdigest(),
+        mtime_ns=after.st_mtime_ns,
+        path_hash=hashlib.sha256(normalized_path.encode("utf-8")).hexdigest(),
+    )
 
 
 def _local_name(tag: str) -> str:

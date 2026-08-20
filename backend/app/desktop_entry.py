@@ -21,6 +21,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--parent-pid", type=int)
     parser.add_argument("--allow-remote-migrations", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--ocr-job")
+    parser.add_argument("--ocr-token")
     return parser
 
 
@@ -151,6 +153,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.self_test:
         return _self_test()
+    if args.ocr_job:
+        if not args.ocr_token:
+            raise SystemExit("--ocr-token is required with --ocr-job")
+        from app.book_ocr import process_claimed_job
+
+        return process_claimed_job(args.ocr_job, args.ocr_token)
     _set_runtime_environment(args)
     return asyncio.run(_serve(args))
 

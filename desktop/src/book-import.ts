@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -21,6 +22,16 @@ export interface UploadBookOptions {
   csrfCookieName: string
   cookies: CookieLike[]
   fetchImpl?: typeof fetch
+}
+
+export interface LinkBookOptions extends Omit<UploadBookOptions, 'filePath'> {
+  sourcePath: string
+  categoryId?: string | null
+  now?: () => number
+}
+
+export interface RelinkBookOptions extends Omit<LinkBookOptions, 'categoryId'> {
+  bookId: string
 }
 
 function isReadableBook(filePath: string): boolean {
@@ -82,29 +93,92 @@ async function errorText(response: Response): Promise<string> {
   }
 }
 
-export async function uploadBookFromDisk(options: UploadBookOptions): Promise<BookUploadResult> {
+async function csrfToken(options: Pick<UploadBookOptions, 'baseUrl' | 'desktopToken' | 'csrfCookieName' | 'cookies' | 'fetchImpl'>): Promise<{
+  fetcher: typeof fetch
+  token: string
+}> {
   const fetcher = options.fetchImpl ?? fetch
   const sessionCookies = cookieHeader(options.cookies)
-  const csrfResponse = await fetcher(`${options.baseUrl}/api/auth/csrf`, {
+  const response = await fetcher(`${options.baseUrl}/api/auth/csrf`, {
     headers: {
       Cookie: sessionCookies,
       'X-Desktop-Token': options.desktopToken,
     },
     redirect: 'error',
   })
-  if (!csrfResponse.ok) throw new Error(`获取 CSRF 令牌失败 (${csrfResponse.status})：${await errorText(csrfResponse)}`)
-  const csrfPayload = await csrfResponse.json() as { csrf_token?: unknown }
-  if (typeof csrfPayload.csrf_token !== 'string' || !csrfPayload.csrf_token) throw new Error('服务端未返回有效的 CSRF 令牌')
+  if (!response.ok) throw new Error(`获取 CSRF 令牌失败 (${response.status})：${await errorText(response)}`)
+  const payload = await response.json() as { csrf_token?: unknown }
+  if (typeof payload.csrf_token !== 'string' || !payload.csrf_token) throw new Error('服务端未返回有效的 CSRF 令牌')
+  return { fetcher, token: payload.csrf_token }
+}
+
+function importedBook(payload: { id?: unknown; book_id?: unknown }, action: string): BookUploadResult {
+  const rawBookId = payload.id ?? payload.book_id
+  if (typeof rawBookId !== 'string' && typeof rawBookId !== 'number') throw new Error(`${action}响应缺少书籍 ID`)
+  return { bookId: String(rawBookId) }
+}
+
+export function desktopFileSignature(operation: string, timestamp: number, sourcePath: string, desktopToken: string): string {
+  return createHmac('sha256', desktopToken)
+    .update(`${operation}\n${timestamp}\n${sourcePath}`, 'utf8')
+    .digest('hex')
+}
+
+async function postLinkedBook(
+  options: LinkBookOptions | RelinkBookOptions,
+  operation: string,
+  endpoint: string,
+  payload: { source_path: string; category_id?: string },
+  action: string,
+): Promise<BookUploadResult> {
+  if (!isReadableBook(options.sourcePath)) throw new Error(`无法读取书籍文件：${options.sourcePath}`)
+  const { fetcher, token } = await csrfToken(options)
+  const timestamp = Math.floor((options.now?.() ?? Date.now()) / 1000)
+  const response = await fetcher(`${options.baseUrl}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      Cookie: cookieHeader(options.cookies, options.csrfCookieName, token),
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': token,
+      'X-Desktop-Token': options.desktopToken,
+      'X-Desktop-File-Timestamp': String(timestamp),
+      'X-Desktop-File-Signature': desktopFileSignature(operation, timestamp, options.sourcePath, options.desktopToken),
+    },
+    body: JSON.stringify(payload),
+    redirect: 'error',
+  })
+  if (!response.ok) throw new Error(`${action}失败 (${response.status})：${await errorText(response)}`)
+  return importedBook(await response.json() as { id?: unknown; book_id?: unknown }, action)
+}
+
+export function linkBookFromDisk(options: LinkBookOptions): Promise<BookUploadResult> {
+  const payload: { source_path: string; category_id?: string } = { source_path: options.sourcePath }
+  if (options.categoryId) payload.category_id = options.categoryId
+  return postLinkedBook(options, 'link', '/api/desktop/books/link', payload, '引用书籍')
+}
+
+export function relinkBookFromDisk(options: RelinkBookOptions): Promise<BookUploadResult> {
+  return postLinkedBook(
+    options,
+    `relink:${options.bookId}`,
+    `/api/desktop/books/${encodeURIComponent(options.bookId)}/relink`,
+    { source_path: options.sourcePath },
+    '重新定位书籍',
+  )
+}
+
+export async function uploadBookFromDisk(options: UploadBookOptions): Promise<BookUploadResult> {
+  const { fetcher, token } = await csrfToken(options)
 
   const boundary = `----ShijianDesktop${crypto.randomUUID().replaceAll('-', '')}`
   const multipart = await multipartBody(options.filePath, boundary)
   const uploadResponse = await fetcher(`${options.baseUrl}/api/books?deduplicate=true`, {
     method: 'POST',
     headers: {
-      Cookie: cookieHeader(options.cookies, options.csrfCookieName, csrfPayload.csrf_token),
+      Cookie: cookieHeader(options.cookies, options.csrfCookieName, token),
       'Content-Type': `multipart/form-data; boundary=${boundary}`,
       'Content-Length': String(multipart.contentLength),
-      'X-CSRF-Token': csrfPayload.csrf_token,
+      'X-CSRF-Token': token,
       'X-Desktop-Token': options.desktopToken,
     },
     body: multipart.body as unknown as BodyInit,
@@ -112,10 +186,7 @@ export async function uploadBookFromDisk(options: UploadBookOptions): Promise<Bo
     redirect: 'error',
   } as RequestInit & { duplex: 'half' })
   if (!uploadResponse.ok) throw new Error(`导入书籍失败 (${uploadResponse.status})：${await errorText(uploadResponse)}`)
-  const payload = await uploadResponse.json() as { id?: unknown; book_id?: unknown }
-  const rawBookId = payload.id ?? payload.book_id
-  if (typeof rawBookId !== 'string' && typeof rawBookId !== 'number') throw new Error('导入响应缺少书籍 ID')
-  return { bookId: String(rawBookId) }
+  return importedBook(await uploadResponse.json() as { id?: unknown; book_id?: unknown }, '导入')
 }
 
 export class PendingBookImports {

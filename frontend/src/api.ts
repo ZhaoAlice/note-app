@@ -45,12 +45,24 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
-async function request<T>(path: string, init: RequestInit = {}, options: { suppressUnauthorized?: boolean } = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: { suppressUnauthorized?: boolean; timeoutMs?: number } = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase()
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) headers.set('X-CSRF-Token', csrfToken)
-  const response = await fetch(path, { ...init, headers, credentials: 'include' })
+  const timeoutController = options.timeoutMs && !init.signal ? new AbortController() : null
+  const timeout = timeoutController
+    ? window.setTimeout(() => timeoutController.abort(), options.timeoutMs)
+    : null
+  let response: Response
+  try {
+    response = await fetch(path, { ...init, headers, credentials: 'include', signal: init.signal ?? timeoutController?.signal })
+  } catch (error) {
+    if (timeoutController?.signal.aborted) throw new ApiError('请求超时，请检查桌面服务后重试', 408)
+    throw error
+  } finally {
+    if (timeout !== null) window.clearTimeout(timeout)
+  }
   if (response.status === 204) return undefined as T
   const contentType = response.headers.get('content-type') ?? ''
   const payload = contentType.includes('application/json') ? await response.json() : await response.text()
@@ -120,21 +132,21 @@ export const notesApi = {
     if (filters.tag) query.set('tag', filters.tag)
     if (filters.group_id) query.set('group_id', filters.group_id)
     if (filters.ungrouped) query.set('ungrouped', 'true')
-    return request<NoteSummary[]>(`/api/notes?${query}`)
+    return request<NoteSummary[]>(`/api/notes?${query}`, {}, { timeoutMs: 15_000 })
   },
   get: (id: string) => request<NoteDetail>(`/api/notes/${id}`),
   exportMarkdown: (id: string) => requestBlob(`/api/notes/${id}/export?format=markdown`),
-  create: (group_id?: string | null) => request<NoteDetail>('/api/notes', { method: 'POST', body: JSON.stringify({ title: '', content: { type: 'doc', content: [] }, tag_names: [], group_id: group_id ?? null }) }),
+  create: (group_id?: string | null) => request<NoteDetail>('/api/notes', { method: 'POST', body: JSON.stringify({ title: '', content: { type: 'doc', content: [] }, tag_names: [], group_id: group_id ?? null }) }, { timeoutMs: 15_000 }),
   update: (id: string, patch: NotePatch) => request<NoteDetail>(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   trash: (id: string) => request<void>(`/api/notes/${id}`, { method: 'DELETE' }),
   restore: (id: string) => request<NoteDetail>(`/api/notes/${id}/restore`, { method: 'POST' }),
   permanentlyDelete: (id: string) => request<void>(`/api/notes/${id}/permanent`, { method: 'DELETE' }),
 }
 
-export const tagsApi = { list: () => request<Tag[]>('/api/tags') }
+export const tagsApi = { list: () => request<Tag[]>('/api/tags', {}, { timeoutMs: 15_000 }) }
 
 export const groupsApi = {
-  list: () => request<Group[]>('/api/groups'),
+  list: () => request<Group[]>('/api/groups', {}, { timeoutMs: 15_000 }),
   create: (name: string) => request<Group>('/api/groups', { method: 'POST', body: JSON.stringify({ name }) }),
   rename: (id: string, name: string) => request<Group>(`/api/groups/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   remove: (id: string) => request<void>(`/api/groups/${id}`, { method: 'DELETE' }),
@@ -206,6 +218,7 @@ export const booksApi = {
   search: (id: string, query: string) => request<BookSearchResult>(`/api/books/${id}/search?q=${encodeURIComponent(query)}`),
   getPageText: (id: string, pageIndex: number) => request<BookPageText>(`/api/books/${id}/pages/${pageIndex}/text`),
   retryOcr: (id: string) => request<BookDetail>(`/api/books/${id}/ocr/retry`, { method: 'POST' }),
+  refreshSource: (id: string) => request<BookDetail>(`/api/desktop/books/${id}/refresh-source`, { method: 'POST' }),
 }
 
 export const desktopApi = {

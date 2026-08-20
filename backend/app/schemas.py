@@ -149,6 +149,8 @@ class NoteSummary(BaseModel):
 
 
 BookFormat = Literal["epub", "pdf", "txt", "md", "markdown"]
+BookStorageMode = Literal["managed", "linked"]
+BookSourceStatus = Literal["available", "changed", "missing"]
 AnnotationType = Literal["bookmark", "highlight", "underline"]
 
 
@@ -230,6 +232,8 @@ class BookSummary(BaseModel):
     author: str | None
     category: BookCategoryOut | None
     format: BookFormat
+    storage_mode: BookStorageMode
+    source_status: BookSourceStatus | None
     size: int
     page_count: int | None
     cover_url: str | None
@@ -248,6 +252,15 @@ class BookDetail(BookSummary):
 
 
 BookOut = BookDetail
+
+
+class DesktopBookLinkInput(BaseModel):
+    source_path: str = Field(min_length=1, max_length=32_768)
+    category_id: str | None = Field(default=None, max_length=36)
+
+
+class DesktopBookRelinkInput(BaseModel):
+    source_path: str = Field(min_length=1, max_length=32_768)
 
 
 class ReadingStateUpdate(BaseModel):

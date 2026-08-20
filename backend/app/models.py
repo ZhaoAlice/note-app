@@ -3,7 +3,19 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -126,6 +138,8 @@ class Book(Base):
     __table_args__ = (
         Index("ix_books_user_updated", "user_id", "updated_at"),
         Index("ix_books_user_format", "user_id", "format"),
+        CheckConstraint("storage_mode IN ('managed', 'linked')", name="ck_books_storage_mode"),
+        UniqueConstraint("user_id", "source_path_hash", name="uq_books_user_source_path_hash"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -136,8 +150,12 @@ class Book(Base):
     author: Mapped[str | None] = mapped_column(String(300), nullable=True)
     format: Mapped[str] = mapped_column(String(16))
     original_name: Mapped[str] = mapped_column(String(255))
-    storage_name: Mapped[str] = mapped_column(String(100), unique=True)
+    storage_mode: Mapped[str] = mapped_column(String(16), default="managed")
+    storage_name: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     reader_storage_name: Mapped[str] = mapped_column(String(100), unique=True)
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_path_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_mtime_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     cover_storage_name: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     cover_mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     sha256: Mapped[str] = mapped_column(String(64), index=True)

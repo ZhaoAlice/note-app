@@ -77,6 +77,10 @@ export type BookFormat = 'epub' | 'pdf' | 'txt' | 'md' | 'markdown'
 
 export type BookOcrStatus = 'not_required' | 'queued' | 'running' | 'completed' | 'failed'
 
+export type BookStorageMode = 'managed' | 'linked'
+
+export type BookSourceStatus = 'available' | 'changed' | 'missing'
+
 export type BookCategory = {
   id: string
   name: string
@@ -95,6 +99,8 @@ export type BookSummary = {
   progress: number
   ocr_status: BookOcrStatus | null
   ocr_progress?: number | null
+  storage_mode: BookStorageMode
+  source_status: BookSourceStatus | null
   category: BookCategory | null
   last_read_at: string | null
   created_at: string

@@ -37,6 +37,22 @@ describe('sidecar readiness', () => {
     child.stdout.write('starting migrations\n')
     child.stdout.write('{"event":"ready","port":45678}\n')
     await expect(ready).resolves.toBe(45678)
+    expect(child.stdout.readableFlowing).toBe(true)
+    expect(child.stderr.readableFlowing).toBe(true)
+  })
+
+  it('continues draining large log output after readiness', async () => {
+    const child = fakeChild()
+    const ready = waitForSidecarReady(child, 1_000)
+    child.stdout.write('{"event":"ready","port":45678}\n')
+    await ready
+
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        child.stdout.write(Buffer.alloc(2 * 1024 * 1024), (error) => error ? reject(error) : resolve())
+      }),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('stdout drain stalled')), 500)),
+    ])
   })
 
   it('reports stderr when the process exits before readiness', async () => {

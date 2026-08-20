@@ -48,8 +48,10 @@
 .rail > .app-mode-nav + nav { margin-top: 10px; }
 
 .book-library-shell {
+  height: 100vh;
   min-height: 100vh;
   overflow-x: hidden;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 10% 0, color-mix(in srgb, var(--accent-soft) 70%, transparent), transparent 28rem),
     var(--bg-canvas);
@@ -115,6 +117,14 @@
 .book-library-heading p:last-child { margin: 0; color: var(--text-secondary); font-size: .84rem; }
 .book-library-heading .eyebrow { margin: 0; color: var(--accent-text); font-size: .68rem; font-weight: 700; letter-spacing: .12em; }
 .book-upload-button { min-height: 34px; flex: none; padding-inline: 13px; font-size: .8rem; }
+.book-add-control { position: relative; flex: none; }
+.book-add-menu { position: absolute; z-index: 30; top: calc(100% + 7px); right: 0; width: 230px; padding: 6px; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-elevated); box-shadow: var(--shadow-lg); }
+.book-add-menu > button { width: 100%; padding: 9px; border: 0; border-radius: 8px; display: flex; align-items: center; gap: 10px; color: var(--text-primary); background: transparent; cursor: pointer; text-align: left; }
+.book-add-menu > button:hover { background: var(--bg-hover); }
+.book-add-menu > button > svg { flex: none; color: var(--accent-text); }
+.book-add-menu > button > span { min-width: 0; display: grid; gap: 2px; }
+.book-add-menu b { font-size: .78rem; }
+.book-add-menu small { color: var(--text-tertiary); font-size: .67rem; }
 
 .visually-hidden {
   position: absolute !important;
@@ -280,6 +290,12 @@
 .book-author span { color: var(--text-tertiary); }
 .book-category-slot { min-height: 21px; margin-top: 6px; }
 .book-category-badge { display: inline-block; max-width: 100%; overflow: hidden; padding: 2px 7px; border-radius: 10px; background: var(--bg-subtle); color: var(--text-secondary); font-size: .63rem; text-overflow: ellipsis; white-space: nowrap; }
+.book-source-slot { min-height: 21px; display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--text-tertiary); font-size: .62rem; }
+.book-source-slot > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-source-slot.changed { color: var(--warning); }
+.book-source-slot.missing { color: var(--danger); }
+.book-source-slot button { flex: none; padding: 2px 5px; border: 1px solid currentColor; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; font: inherit; }
+.book-source-slot button:disabled { opacity: .55; cursor: default; }
 .book-progress { display: flex; flex-direction: column; gap: 5px; margin-top: 11px; color: var(--text-tertiary); font-size: .63rem; }
 .book-progress > div { display: flex; align-items: center; justify-content: space-between; }
 .book-progress > span { width: 100%; height: 4px; overflow: hidden; border-radius: 5px; background: var(--bg-subtle); }
@@ -334,6 +350,8 @@
   .book-library-content { width: 100%; padding: 24px 14px 42px; }
   .book-library-heading { align-items: flex-start; flex-direction: column; }
   .book-upload-button { width: 100%; justify-content: center; }
+  .book-add-control { width: 100%; }
+  .book-add-menu { right: 0; left: 0; width: auto; }
   .book-library-workspace { display: flex; gap: 14px; margin-top: 18px; flex-direction: column; }
   .book-category-panel { position: static; width: 100%; box-sizing: border-box; padding: 9px; }
   .book-category-panel-heading { padding-bottom: 7px; }

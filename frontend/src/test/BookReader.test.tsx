@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   removeAnnotation: vi.fn(),
   search: vi.fn(),
   retryOcr: vi.fn(),
+  refreshSource: vi.fn(),
   contentUrl: vi.fn((id: string) => `/api/books/${id}/content`),
 }))
 
@@ -60,6 +61,8 @@ function makeBook(format: BookFormat, patch: Partial<BookDetail> = {}): BookDeta
     created_at: '2026-08-19T00:00:00Z',
     updated_at: '2026-08-19T00:00:00Z',
     category: null,
+    storage_mode: 'managed',
+    source_status: null,
     ...patch,
   }
 }
@@ -101,6 +104,8 @@ describe('BookReader', () => {
     api.removeAnnotation.mockResolvedValue(undefined)
     api.search.mockResolvedValue({ items: [], index_complete: true })
     api.retryOcr.mockResolvedValue(makeBook('pdf', { ocr_status: 'queued' }))
+    api.refreshSource.mockResolvedValue(makeBook('txt', { storage_mode: 'linked', source_status: 'available' }))
+    delete window.shijianDesktop
   })
 
   it.each([
@@ -175,5 +180,29 @@ describe('BookReader', () => {
     expect(await screen.findByText('模型不可用')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /重试 OCR/ }))
     await waitFor(() => expect(api.retryOcr).toHaveBeenCalledWith('b1'))
+  })
+
+  it('本地原文件变化时自动刷新，失败后继续使用缓存', async () => {
+    api.get.mockResolvedValue(makeBook('txt', { storage_mode: 'linked', source_status: 'changed' }))
+    api.refreshSource.mockRejectedValueOnce(new Error('文件被占用'))
+    renderReader()
+    expect(await screen.findByTestId('txt-reader')).toBeInTheDocument()
+    await waitFor(() => expect(api.refreshSource).toHaveBeenCalledWith('b1'))
+    expect(await screen.findByText('原文件更新失败，正在使用上次的阅读缓存。')).toBeInTheDocument()
+    expect(screen.getByTestId('txt-reader')).toBeInTheDocument()
+  })
+
+  it('本地原文件缺失时允许缓存阅读和重新定位', async () => {
+    const relinkBook = vi.fn().mockResolvedValue({ bookId: 'b1' })
+    window.shijianDesktop = {
+      platform: 'linux', selectConfigFile: vi.fn(), openConfigDirectory: vi.fn(), restartApp: vi.fn(), authReady: vi.fn(),
+      selectLinkedBooks: vi.fn(), relinkBook, onBookImported: vi.fn(() => () => {}),
+    }
+    api.get.mockResolvedValue(makeBook('txt', { storage_mode: 'linked', source_status: 'missing' }))
+    renderReader()
+    expect(await screen.findByText('原文件已移动或删除，仍可使用上次缓存继续阅读。')).toBeInTheDocument()
+    expect(screen.getByTestId('txt-reader')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新定位' }))
+    await waitFor(() => expect(relinkBook).toHaveBeenCalledWith('b1', 'txt'))
   })
 })

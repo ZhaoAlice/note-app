@@ -8,7 +8,9 @@ import {
   FilePlus2,
   Folder,
   FolderOpen,
+  HardDrive,
   ImagePlus,
+  Link2,
   LoaderCircle,
   LogOut,
   Moon,
@@ -328,6 +330,7 @@ export default function BookLibraryPage({ user }: { user: User }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const uploadInput = useRef<HTMLInputElement>(null)
+  const addBookMenu = useRef<HTMLDivElement>(null)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search.trim())
   const [format, setFormat] = useState<BookFormat | ''>('')
@@ -337,6 +340,10 @@ export default function BookLibraryPage({ user }: { user: User }) {
   const [categorizing, setCategorizing] = useState<BookSummary | null>(null)
   const [deleting, setDeleting] = useState<BookSummary | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [addBookMenuOpen, setAddBookMenuOpen] = useState(false)
+  const [linkingBooks, setLinkingBooks] = useState(false)
+  const [linkBooksError, setLinkBooksError] = useState<string | null>(null)
+  const [relinkingBookId, setRelinkingBookId] = useState<string | null>(null)
   const [dataManagementOpen, setDataManagementOpen] = useState(false)
   const [displayNameDraft, setDisplayNameDraft] = useState(user.display_name ?? '')
   const [theme, setTheme] = useState<ThemeId>(getTheme)
@@ -417,10 +424,73 @@ export default function BookLibraryPage({ user }: { user: User }) {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [profileOpen])
 
+  useEffect(() => {
+    if (!addBookMenuOpen) return
+    const closeMenu = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === 'Escape') setAddBookMenuOpen(false)
+        return
+      }
+      if (!addBookMenu.current?.contains(event.target as Node)) setAddBookMenuOpen(false)
+    }
+    window.addEventListener('mousedown', closeMenu)
+    window.addEventListener('keydown', closeMenu)
+    return () => {
+      window.removeEventListener('mousedown', closeMenu)
+      window.removeEventListener('keydown', closeMenu)
+    }
+  }, [addBookMenuOpen])
+
   function chooseBook(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (file) uploadBook.mutate(file)
     event.target.value = ''
+  }
+
+  function openAddBook() {
+    if (window.shijianDesktop) setAddBookMenuOpen((open) => !open)
+    else uploadInput.current?.click()
+  }
+
+  async function linkLocalBooks() {
+    const desktop = window.shijianDesktop
+    if (!desktop?.selectLinkedBooks || linkingBooks) return
+    setLinkBooksError(null)
+    setLinkingBooks(true)
+    try {
+      const results = await desktop.selectLinkedBooks(typeof selectedCategory === 'string' ? selectedCategory : null)
+      setAddBookMenuOpen(false)
+      if (!results.length) return
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['books'] }),
+        queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+      ])
+      navigate(`/books/${results.at(-1)!.bookId}/read`)
+    } catch (error) {
+      setLinkBooksError(error instanceof Error ? error.message : '无法引用所选文件')
+    } finally {
+      setLinkingBooks(false)
+    }
+  }
+
+  async function relinkBook(book: BookSummary) {
+    const desktop = window.shijianDesktop
+    if (!desktop?.relinkBook || relinkingBookId) return
+    setLinkBooksError(null)
+    setRelinkingBookId(book.id)
+    try {
+      const result = await desktop.relinkBook(book.id, book.format)
+      if (result) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['books'] }),
+          queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+        ])
+      }
+    } catch (error) {
+      setLinkBooksError(error instanceof Error ? error.message : '无法重新定位原文件')
+    } finally {
+      setRelinkingBookId(null)
+    }
   }
 
   function saveProfile(event: FormEvent<HTMLFormElement>) {
@@ -455,14 +525,23 @@ export default function BookLibraryPage({ user }: { user: User }) {
       <section className="book-library-content">
         <div className="book-library-heading">
           <div><p className="eyebrow">你的藏书</p><h1>书架</h1><p>把常读的书收在一处，随时从上次的位置继续。</p></div>
-          <button className="button primary book-upload-button" onClick={() => uploadInput.current?.click()} disabled={uploadBook.isPending}>
-            {uploadBook.isPending ? <LoaderCircle className="spin" size={18} /> : <Upload size={18} />}
-            {uploadBook.isPending ? '上传中…' : '上传书籍'}
-          </button>
+          <div className="book-add-control" ref={addBookMenu}>
+            <button className="button primary book-upload-button" onClick={openAddBook} disabled={uploadBook.isPending || linkingBooks} aria-expanded={window.shijianDesktop ? addBookMenuOpen : undefined} aria-haspopup={window.shijianDesktop ? 'menu' : undefined}>
+              {uploadBook.isPending || linkingBooks ? <LoaderCircle className="spin" size={18} /> : <Upload size={18} />}
+              {window.shijianDesktop ? (linkingBooks ? '引用中…' : uploadBook.isPending ? '复制中…' : '添加书籍') : (uploadBook.isPending ? '上传中…' : '上传书籍')}
+            </button>
+            {window.shijianDesktop && addBookMenuOpen && (
+              <div className="book-add-menu" role="menu" aria-label="添加书籍方式">
+                <button type="button" role="menuitem" onClick={() => { setAddBookMenuOpen(false); uploadInput.current?.click() }}><HardDrive size={17} /><span><b>复制到书架</b><small>保存一份原文件到拾笺</small></span></button>
+                <button type="button" role="menuitem" onClick={() => void linkLocalBooks()}><Link2 size={17} /><span><b>引用本地文件</b><small>原文件保留在当前位置</small></span></button>
+              </div>
+            )}
+          </div>
           <input ref={uploadInput} className="visually-hidden" aria-label="选择书籍文件" type="file" accept={acceptedBookTypes} onChange={chooseBook} />
         </div>
 
         {uploadBook.isError && <div className="book-notice error" role="alert">上传失败：{uploadBook.error.message}</div>}
+        {linkBooksError && <div className="book-notice error" role="alert">本地文件操作失败：{linkBooksError}</div>}
         {uploadBook.isSuccess && <div className="book-notice" role="status">书籍已加入书架。</div>}
 
         <div className="book-library-workspace">
@@ -481,7 +560,7 @@ export default function BookLibraryPage({ user }: { user: User }) {
                 <span><FilePlus2 size={32} /></span>
                 <h2>{deferredSearch || format || selectedCategory !== undefined ? '没有找到匹配的书' : '书架还是空的'}</h2>
                 <p>{deferredSearch || format || selectedCategory !== undefined ? '试试清除筛选，或切换到其他分类。' : '上传 EPUB、PDF、TXT 或 Markdown，开始你的阅读。'}</p>
-                {!deferredSearch && !format && selectedCategory === undefined && <button className="button primary" onClick={() => uploadInput.current?.click()}><Upload size={17} />上传第一本书</button>}
+                {!deferredSearch && !format && selectedCategory === undefined && <button className="button primary" onClick={openAddBook}><Upload size={17} />{window.shijianDesktop ? '添加第一本书' : '上传第一本书'}</button>}
               </div>
             )}
 
@@ -500,6 +579,11 @@ export default function BookLibraryPage({ user }: { user: User }) {
                     <div className="book-category-slot">
                       {book.category && <span className="book-category-badge">{book.category.name}</span>}
                     </div>
+                    <div className={`book-source-slot ${book.source_status ?? ''}`}>
+                      {book.storage_mode === 'linked' && book.source_status === 'missing' && <><span>原文件已移动</span><button type="button" disabled={!window.shijianDesktop?.relinkBook || relinkingBookId === book.id} onClick={() => void relinkBook(book)}>{relinkingBookId === book.id ? '定位中…' : '重新定位'}</button></>}
+                      {book.storage_mode === 'linked' && book.source_status === 'changed' && <span>本地引用 · 原文件有更新</span>}
+                      {book.storage_mode === 'linked' && book.source_status === 'available' && <span>本地引用</span>}
+                    </div>
                     <div className="book-progress" aria-label={`阅读进度 ${readProgress}%`}>
                       <div><span>阅读进度</span><b>{readProgress}%</b></div>
                       <span><i style={{ width: `${readProgress}%` }} /></span>
@@ -513,7 +597,7 @@ export default function BookLibraryPage({ user }: { user: User }) {
                     <p className="book-last-read">{book.last_read_at ? `上次阅读 ${relativeDate(book.last_read_at)}` : `上传于 ${relativeDate(book.created_at)}`}</p>
                     <div className="book-card-actions">
                       <Link className="button compact primary" to={`/books/${book.id}/read`}>继续阅读</Link>
-                      <a className="book-icon-button" href={book.download_url || booksApi.downloadUrl(book.id)} aria-label={`下载《${book.title}》`} title="下载原文件"><Download size={16} /></a>
+                      {book.source_status === 'missing' ? <button className="book-icon-button" type="button" disabled aria-label={`无法下载《${book.title}》：原文件已移动`} title="原文件已移动"><Download size={16} /></button> : <a className="book-icon-button" href={book.download_url || booksApi.downloadUrl(book.id)} aria-label={`下载《${book.title}》`} title="下载原文件"><Download size={16} /></a>}
                       <button className="book-icon-button" onClick={() => { updateBookCategory.reset(); setCategorizing(book) }} aria-label={`设置《${book.title}》的分类`} title="设置分类"><FolderOpen size={16} /></button>
                       <button className="book-icon-button" onClick={() => { updateBook.reset(); updateCover.reset(); removeCover.reset(); setEditing(book) }} aria-label={`编辑《${book.title}》`} title="编辑"><Pencil size={16} /></button>
                       <button className="book-icon-button danger" onClick={() => { removeBook.reset(); setDeleting(book) }} aria-label={`删除《${book.title}》`} title="永久删除"><Trash2 size={16} /></button>
@@ -569,7 +653,7 @@ export default function BookLibraryPage({ user }: { user: User }) {
           </form>
         </section>
       )}
-      <ConfirmDialog open={Boolean(deleting)} title="永久删除这本书？" description={`《${deleting?.title ?? ''}》的原文件、阅读进度和所有批注都将永久删除，且无法恢复。`} confirmLabel="永久删除" danger busy={removeBook.isPending} error={removeBook.error?.message} onCancel={() => setDeleting(null)} onConfirm={() => { if (deleting) removeBook.mutate(deleting.id) }} />
+      <ConfirmDialog open={Boolean(deleting)} title="永久删除这本书？" description={deleting?.storage_mode === 'linked' ? `《${deleting.title}》将从书架移除，阅读缓存、进度和批注会被删除；电脑中的原文件会保留。` : `《${deleting?.title ?? ''}》的原文件、阅读进度和所有批注都将永久删除，且无法恢复。`} confirmLabel="永久删除" danger busy={removeBook.isPending} error={removeBook.error?.message} onCancel={() => setDeleting(null)} onConfirm={() => { if (deleting) removeBook.mutate(deleting.id) }} />
       {dataManagementOpen && (
         <DataManagementDialog
           onClose={() => setDataManagementOpen(false)}

@@ -2,12 +2,14 @@ import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type R
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  AlertTriangle,
   Bookmark,
   BookOpen,
   ChevronLeft,
   ChevronRight,
   Highlighter,
   LoaderCircle,
+  Link2,
   MessageSquareText,
   Moon,
   PanelRightClose,
@@ -197,6 +199,7 @@ export default function BookReader({ user }: { user: User }) {
   const [settings, setSettings] = useState<BookReadingSettings>(DEFAULT_SETTINGS)
   const [stateReady, setStateReady] = useState(false)
   const latestState = useRef<BookReadingStateInput | null>(null)
+  const refreshAttempt = useRef<string | null>(null)
 
   const book = useQuery({
     queryKey: ['books', bookId],
@@ -228,6 +231,7 @@ export default function BookReader({ user }: { user: User }) {
     setPosition(null)
     setTargetLocation(null)
     setSelection(null)
+    refreshAttempt.current = null
   }, [bookId])
 
   useEffect(() => {
@@ -300,6 +304,37 @@ export default function BookReader({ user }: { user: User }) {
     mutationFn: () => booksApi.retryOcr(bookId),
     onSuccess: (updated) => queryClient.setQueryData(['books', bookId], updated),
   })
+  const refreshSource = useMutation({
+    mutationFn: () => booksApi.refreshSource(bookId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['books', bookId], updated)
+      void queryClient.invalidateQueries({ queryKey: ['books'], exact: false })
+    },
+  })
+  const relinkSource = useMutation({
+    mutationFn: () => {
+      if (!window.shijianDesktop?.relinkBook) throw new Error('请在桌面客户端中重新定位原文件')
+      return window.shijianDesktop.relinkBook(bookId, book.data?.format)
+    },
+    onSuccess: async (result) => {
+      if (!result) return
+      refreshAttempt.current = null
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['books'] }),
+        queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+      ])
+      await book.refetch()
+    },
+  })
+
+  useEffect(() => {
+    const current = book.data
+    if (current?.storage_mode !== 'linked' || current.source_status !== 'changed') return
+    const attemptKey = `${current.id}:${current.updated_at}`
+    if (refreshAttempt.current === attemptKey || refreshSource.isPending) return
+    refreshAttempt.current = attemptKey
+    refreshSource.mutate()
+  }, [book.data, refreshSource])
 
   const toggleSidebar = (panel: Exclude<Sidebar, null>) => setSidebar((current) => current === panel ? null : panel)
   const addBookmark = () => {
@@ -340,9 +375,11 @@ export default function BookReader({ user }: { user: User }) {
   const isPdf = currentBook.format === 'pdf'
   const progress = position?.progress ?? readingState.data?.progress ?? currentBook.progress ?? 0
   const ocrActive = currentBook.ocr_status === 'queued' || currentBook.ocr_status === 'running'
+  const hasSourceStatus = currentBook.storage_mode === 'linked' && (currentBook.source_status === 'missing' || currentBook.source_status === 'changed' || refreshSource.isError)
+  const hasOcrStatus = currentBook.format === 'pdf' && Boolean(currentBook.ocr_status && currentBook.ocr_status !== 'not_required')
 
   return (
-    <main className={`book-reader reader-theme-${settings.theme ?? 'warm'} ${sidebar ? 'sidebar-open' : ''}`} data-user={user.id}>
+    <main className={`book-reader reader-theme-${settings.theme ?? 'warm'} ${sidebar ? 'sidebar-open' : ''} ${hasSourceStatus ? 'source-status-open' : ''} ${hasOcrStatus ? 'ocr-status-open' : ''}`} data-user={user.id}>
       <header className="reader-toolbar">
         <button aria-label="返回书架" className="reader-tool-button" onClick={() => navigate('/books')} type="button"><ArrowLeft size={19} /></button>
         <div className="reader-title">
@@ -364,12 +401,25 @@ export default function BookReader({ user }: { user: User }) {
         </nav>
       </header>
 
-      {currentBook.format === 'pdf' && currentBook.ocr_status && currentBook.ocr_status !== 'not_required' && (
-        <aside className={`reader-ocr-status ${currentBook.ocr_status}`} aria-live="polite">
-          {ocrActive && <><LoaderCircle className="spin" size={14} /> 正在识别扫描文字{currentBook.ocr_progress != null ? ` · ${Math.round(currentBook.ocr_progress * 100)}%` : ''}，阅读不受影响</>}
-          {currentBook.ocr_status === 'completed' && <>扫描文字已识别，可搜索并选择文字</>}
-          {currentBook.ocr_status === 'failed' && <><span>{currentBook.ocr_error || '扫描文字识别失败'}</span><button disabled={retryOcr.isPending} onClick={() => retryOcr.mutate()} type="button"><RotateCcw size={13} /> {retryOcr.isPending ? '重试中…' : '重试 OCR'}</button></>}
-        </aside>
+      {(hasSourceStatus || hasOcrStatus) && (
+        <div className="reader-status-stack">
+          {currentBook.storage_mode === 'linked' && currentBook.source_status === 'changed' && !refreshSource.isError && (
+            <aside className="reader-source-status changed" aria-live="polite"><LoaderCircle className="spin" size={14} />检测到原文件有更新，正在刷新阅读缓存…</aside>
+          )}
+          {currentBook.storage_mode === 'linked' && refreshSource.isError && (
+            <aside className="reader-source-status failed" role="alert"><AlertTriangle size={14} /><span>原文件更新失败，正在使用上次的阅读缓存。</span><button type="button" disabled={refreshSource.isPending} onClick={() => { refreshAttempt.current = null; refreshSource.mutate() }}><RotateCcw size={13} />重试</button></aside>
+          )}
+          {currentBook.storage_mode === 'linked' && currentBook.source_status === 'missing' && (
+            <aside className="reader-source-status missing" role="status"><AlertTriangle size={14} /><span>原文件已移动或删除，仍可使用上次缓存继续阅读。</span><button type="button" disabled={!window.shijianDesktop?.relinkBook || relinkSource.isPending} onClick={() => relinkSource.mutate()}><Link2 size={13} />{relinkSource.isPending ? '定位中…' : '重新定位'}</button>{relinkSource.isError && <small role="alert">{relinkSource.error.message}</small>}</aside>
+          )}
+          {hasOcrStatus && (
+            <aside className={`reader-ocr-status ${currentBook.ocr_status}`} aria-live="polite">
+              {ocrActive && <><LoaderCircle className="spin" size={14} /> 正在识别扫描文字{currentBook.ocr_progress != null ? ` · ${Math.round(currentBook.ocr_progress * 100)}%` : ''}，阅读不受影响</>}
+              {currentBook.ocr_status === 'completed' && <>扫描文字已识别，可搜索并选择文字</>}
+              {currentBook.ocr_status === 'failed' && <><span>{currentBook.ocr_error || '扫描文字识别失败'}</span><button disabled={retryOcr.isPending} onClick={() => retryOcr.mutate()} type="button"><RotateCcw size={13} /> {retryOcr.isPending ? '重试中…' : '重试 OCR'}</button></>}
+            </aside>
+          )}
+        </div>
       )}
 
       <section className="reader-stage" aria-label={`${currentBook.title}正文`}>

@@ -1,6 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bookCategoriesApi, booksApi, dataApi, desktopApi, notesApi } from '../api'
 
+describe('notesApi timeouts', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('把长时间无响应转换为可见的桌面服务超时错误', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    })))
+
+    const pending = notesApi.list({ status: 'active' })
+    const rejection = expect(pending).rejects.toMatchObject({ status: 408, message: '请求超时，请检查桌面服务后重试' })
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    await rejection
+  })
+})
+
 describe('dataApi', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -121,6 +141,15 @@ describe('booksApi', () => {
     await booksApi.upload(new File(['book'], 'book.pdf'), { deduplicate: true })
 
     expect(fetchMock.mock.calls[0][0]).toBe('/api/books?deduplicate=true')
+  })
+
+  it('刷新本地引用书籍的源文件缓存', async () => {
+    const response = { id: 'b1', title: '书', storage_mode: 'linked', source_status: 'available' }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(booksApi.refreshSource('b1')).resolves.toEqual(response)
+    expect(fetchMock).toHaveBeenCalledWith('/api/desktop/books/b1/refresh-source', expect.objectContaining({ method: 'POST', credentials: 'include' }))
   })
 })
 

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
+from pathlib import Path
+import time
 import zipfile
 from io import BytesIO
 
 import pytest
+
+from app.config import get_settings
 
 from .conftest import csrf_headers, register
 
@@ -14,6 +19,27 @@ from .conftest import csrf_headers, register
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+DESKTOP_TOKEN = "archive-desktop-token-1234567890"
+
+
+def _linked_book_headers(client, source_path: str) -> dict[str, str]:
+    base_headers = {"X-Desktop-Token": DESKTOP_TOKEN}
+    created = client.post("/api/desktop/bootstrap", headers=base_headers)
+    assert created.status_code == 201, created.text
+    csrf = client.get("/api/auth/csrf", headers=base_headers)
+    assert csrf.status_code == 200, csrf.text
+    timestamp = str(int(time.time()))
+    signature = hmac.new(
+        DESKTOP_TOKEN.encode(),
+        f"link\n{timestamp}\n{source_path}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        **base_headers,
+        "X-CSRF-Token": csrf.json()["csrf_token"],
+        "X-Desktop-File-Timestamp": timestamp,
+        "X-Desktop-File-Signature": signature,
+    }
 
 
 def _zip(entries: dict[str, bytes]) -> BytesIO:
@@ -203,6 +229,61 @@ def test_backup_v3_round_trips_book_category_file_state_coverless_metadata_and_a
     assert state["progress"] == 0.4 and state["theme"] == "dark"
     annotations = client.get(f"/api/books/{restored[0]['id']}/annotations").json()
     assert annotations[0]["note"] == "备份批注"
+
+
+def test_backup_embeds_linked_original_and_restores_it_as_managed(client, tmp_path: Path):
+    settings = get_settings()
+    previous_desktop = settings.desktop.model_copy(deep=True)
+    settings.desktop.enabled = True
+    settings.desktop.token = DESKTOP_TOKEN
+    source = tmp_path / "本地引用.md"
+    original = "# 本地引用\n完整备份必须包含原文件。".encode()
+    source.write_bytes(original)
+    source_path = str(source.resolve())
+    try:
+        headers = _linked_book_headers(client, source_path)
+        linked = client.post(
+            "/api/desktop/books/link",
+            headers=headers,
+            json={"source_path": source_path},
+        )
+        assert linked.status_code == 201, linked.text
+        book = linked.json()
+        assert book["storage_mode"] == "linked"
+
+        exported = client.get(
+            "/api/data/export", params={"format": "backup"}, headers=headers
+        )
+        assert exported.status_code == 200, exported.text
+        with zipfile.ZipFile(BytesIO(exported.content)) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            record = json.loads(archive.read(manifest["books"][0]["path"]))
+            assert archive.read(record["file"]["path"]) == original
+            assert "source_path" not in record
+            assert "storage_mode" not in record
+
+        source.unlink()
+        missing_export = client.get(
+            "/api/data/export", params={"format": "backup"}, headers=headers
+        )
+        assert missing_export.status_code == 409
+        assert "linked book source file is missing" in missing_export.json()["detail"]
+
+        assert client.delete(f"/api/books/{book['id']}", headers=headers).status_code == 204
+        imported = client.post(
+            "/api/data/import",
+            params={"format": "backup"},
+            headers=headers,
+            files={"file": ("linked-backup.zip", BytesIO(exported.content), "application/zip")},
+        )
+        assert imported.status_code == 200, imported.text
+        restored = client.get("/api/books", headers=headers).json()
+        assert len(restored) == 1
+        assert restored[0]["storage_mode"] == "managed"
+        assert restored[0]["source_status"] is None
+        assert client.get(restored[0]["download_url"], headers=headers).content == original
+    finally:
+        settings.desktop = previous_desktop
 
 
 def test_backup_v2_imports_books_as_uncategorized(client):

@@ -9,11 +9,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import AppSettings, get_settings
-from ..book_files import prepare_book_file, sniff_cover
+from ..book_files import inspect_local_book_source, prepare_book_file, sniff_cover
 from ..book_ocr import wake_ocr_worker
 from ..database import get_db
 from ..dependencies import AuthContext, current_auth, require_csrf
@@ -108,6 +108,183 @@ def _write_upload(file: UploadFile, target: Path, max_bytes: int) -> tuple[int, 
     if size == 0:
         raise HTTPException(422, "book file is empty")
     return size, digest.hexdigest()
+
+
+def _add_text_units(db: Session, book_id: str, units: list[dict[str, Any]]) -> None:
+    for unit in units:
+        db.add(
+            BookTextUnit(
+                book_id=book_id,
+                unit_index=unit["unit_index"],
+                locator=_json(unit["locator"]),
+                text=unit["text"],
+                boxes=None,
+                source=unit["source"],
+                label=unit["label"],
+            )
+        )
+
+
+def create_linked_book(
+    db: Session,
+    user_id: str,
+    raw_source_path: str,
+    category_id: str | None,
+    settings: AppSettings,
+) -> tuple[Book, bool]:
+    """Create a linked book and its app-owned safe reader cache."""
+    source = inspect_local_book_source(raw_source_path, settings.storage.max_book_bytes)
+    existing = db.scalar(
+        _book_query().where(Book.user_id == user_id, Book.source_path_hash == source.path_hash)
+    )
+    if existing is not None:
+        return existing, False
+    category = _owned_category(db, user_id, category_id) if category_id else None
+    book_dir = settings.book_path()
+    book_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    temporary = book_dir / f".{token}.reader.part"
+    reader_storage_name = f"{token}.reader.{source.format}"
+    reader_target = book_dir / reader_storage_name
+    created_paths = [temporary, reader_target]
+    cover_storage_name: str | None = None
+    try:
+        prepared = prepare_book_file(
+            source.path,
+            source.original_name,
+            temporary,
+            settings.storage.max_book_bytes,
+            settings.storage.max_cover_bytes,
+        )
+        os.replace(temporary, reader_target)
+        if prepared.cover_bytes and prepared.cover_mime_type:
+            cover_extension = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }[prepared.cover_mime_type]
+            cover_storage_name = f"{token}.cover{cover_extension}"
+            cover_target = book_dir / cover_storage_name
+            with cover_target.open("xb") as output:
+                output.write(prepared.cover_bytes)
+            created_paths.append(cover_target)
+        book = Book(
+            user_id=user_id,
+            category=category,
+            title=prepared.title or source.path.stem.strip() or "Untitled",
+            author=prepared.author,
+            format=source.format,
+            original_name=source.original_name,
+            storage_mode="linked",
+            storage_name=None,
+            reader_storage_name=reader_storage_name,
+            source_path=str(source.path),
+            source_path_hash=source.path_hash,
+            source_mtime_ns=source.mtime_ns,
+            cover_storage_name=cover_storage_name,
+            cover_mime_type=prepared.cover_mime_type if cover_storage_name else None,
+            sha256=source.sha256,
+            size=source.size,
+            page_count=prepared.page_count,
+            search_text=prepared.search_text,
+        )
+        db.add(book)
+        db.flush()
+        book.reading_state = BookReadingState(locator="null", progress=0.0, settings="{}")
+        _add_text_units(db, book.id, prepared.text_units)
+        if source.format == "pdf":
+            book.ocr_job = BookOcrJob(
+                status="queued", pages_total=prepared.page_count or 0, pages_done=0
+            )
+        db.commit()
+        if source.format == "pdf":
+            wake_ocr_worker()
+        return _owned_book(db, user_id, book.id), True
+    except Exception:
+        db.rollback()
+        for path in created_paths:
+            path.unlink(missing_ok=True)
+        raise
+
+
+def refresh_linked_book(
+    db: Session,
+    book: Book,
+    settings: AppSettings,
+    raw_source_path: str | None = None,
+) -> Book:
+    """Atomically replace a linked book's derived cache and index."""
+    if book.storage_mode != "linked":
+        raise HTTPException(409, "book is not linked to a local file")
+    source = inspect_local_book_source(
+        raw_source_path if raw_source_path is not None else (book.source_path or ""),
+        settings.storage.max_book_bytes,
+    )
+    if source.format != book.format:
+        raise HTTPException(422, "replacement book format must match the linked book")
+    duplicate = db.scalar(
+        select(Book).where(
+            Book.user_id == book.user_id,
+            Book.source_path_hash == source.path_hash,
+            Book.id != book.id,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(409, "source book is already linked")
+
+    book_dir = settings.book_path()
+    book_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    temporary = book_dir / f".{token}.reader.part"
+    new_reader_name = f"{token}.reader.{source.format}"
+    new_reader = book_dir / new_reader_name
+    old_reader_name = book.reader_storage_name
+    try:
+        prepared = prepare_book_file(
+            source.path,
+            source.original_name,
+            temporary,
+            settings.storage.max_book_bytes,
+            settings.storage.max_cover_bytes,
+        )
+        os.replace(temporary, new_reader)
+
+        db.execute(delete(BookTextUnit).where(BookTextUnit.book_id == book.id))
+        db.flush()
+        _add_text_units(db, book.id, prepared.text_units)
+        book.original_name = source.original_name
+        book.reader_storage_name = new_reader_name
+        book.source_path = str(source.path)
+        book.source_path_hash = source.path_hash
+        book.source_mtime_ns = source.mtime_ns
+        book.sha256 = source.sha256
+        book.size = source.size
+        book.page_count = prepared.page_count
+        book.search_text = prepared.search_text
+        book.updated_at = utcnow()
+        if source.format == "pdf":
+            if book.ocr_job is None:
+                book.ocr_job = BookOcrJob(book_id=book.id)
+            book.ocr_job.status = "queued"
+            book.ocr_job.pages_total = prepared.page_count or 0
+            book.ocr_job.pages_done = 0
+            book.ocr_job.error = None
+            book.ocr_job.claim_token = None
+            book.ocr_job.lease_until = None
+            book.ocr_job.updated_at = utcnow()
+        elif book.ocr_job is not None:
+            db.delete(book.ocr_job)
+        db.commit()
+    except Exception:
+        db.rollback()
+        temporary.unlink(missing_ok=True)
+        new_reader.unlink(missing_ok=True)
+        raise
+    if old_reader_name != new_reader_name:
+        (book_dir / old_reader_name).unlink(missing_ok=True)
+    if source.format == "pdf":
+        wake_ocr_worker()
+    return _owned_book(db, book.user_id, book.id)
 
 
 @router.get("", response_model=list[BookSummary])
@@ -213,6 +390,7 @@ def upload_book(
             author=(author.strip() or None) if author is not None else prepared.author,
             format=book_format,
             original_name=original_name,
+            storage_mode="managed",
             storage_name=storage_name,
             reader_storage_name=reader_storage_name,
             cover_storage_name=cover_storage_name,
@@ -329,6 +507,14 @@ def download_book(
     settings: AppSettings = Depends(get_settings),
 ) -> FileResponse:
     book = _owned_book(db, auth.user.id, book_id)
+    if book.storage_mode == "linked":
+        try:
+            source_path = Path(book.source_path or "")
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(404, "source book file not found") from exc
+        return _book_file_response(book, source_path, original=True)
+    if not book.storage_name:
+        raise HTTPException(404, "book file not found")
     return _book_file_response(book, settings.book_path() / book.storage_name, original=True)
 
 

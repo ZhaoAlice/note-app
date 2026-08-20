@@ -29,6 +29,7 @@ const book = {
   id: 'b1', title: '海边的卡夫卡', author: '村上春树', format: 'epub' as const, size: 1_500_000,
   page_count: null, cover_url: '/api/books/b1/cover', content_url: '/api/books/b1/content', download_url: '/api/books/b1/download',
   progress: .42, ocr_status: 'not_required' as const, ocr_progress: null, last_read_at: '2026-08-18T08:00:00Z',
+  storage_mode: 'managed' as const, source_status: null,
   category: { id: 'c1', name: '小说' },
   created_at: '2026-08-01T08:00:00Z', updated_at: '2026-08-18T08:00:00Z',
 }
@@ -52,6 +53,7 @@ function renderPage() {
 describe('BookLibraryPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete window.shijianDesktop
     list.mockResolvedValue([book])
     categoryList.mockResolvedValue([{ id: 'c1', name: '小说' }, { id: 'c2', name: '技术' }])
     categoryCreate.mockResolvedValue({ id: 'c3', name: '随笔' })
@@ -112,6 +114,37 @@ describe('BookLibraryPage', () => {
     fireEvent.change(screen.getByLabelText('选择书籍文件'), { target: { files: [file] } })
     await waitFor(() => expect(upload).toHaveBeenCalledWith(file))
     expect(await screen.findByText('书籍已加入书架。')).toBeInTheDocument()
+  })
+
+  it('桌面端可选择复制到书架或引用本地文件', async () => {
+    const selectLinkedBooks = vi.fn().mockResolvedValue([{ bookId: 'linked-1' }])
+    window.shijianDesktop = {
+      platform: 'win32', selectConfigFile: vi.fn(), openConfigDirectory: vi.fn(), restartApp: vi.fn(), authReady: vi.fn(),
+      selectLinkedBooks, relinkBook: vi.fn(), onBookImported: vi.fn(() => () => {}),
+    }
+    renderPage()
+    await screen.findByText('海边的卡夫卡')
+
+    fireEvent.click(screen.getByRole('button', { name: '技术' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加书籍' }))
+    expect(screen.getByRole('menuitem', { name: /复制到书架/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: /引用本地文件/ }))
+    await waitFor(() => expect(selectLinkedBooks).toHaveBeenCalledWith('c2'))
+    expect(await screen.findByText('阅读页')).toBeInTheDocument()
+  })
+
+  it('本地原文件缺失时禁用下载并支持重新定位', async () => {
+    const relinkBook = vi.fn().mockResolvedValue({ bookId: 'b1' })
+    window.shijianDesktop = {
+      platform: 'win32', selectConfigFile: vi.fn(), openConfigDirectory: vi.fn(), restartApp: vi.fn(), authReady: vi.fn(),
+      selectLinkedBooks: vi.fn(), relinkBook, onBookImported: vi.fn(() => () => {}),
+    }
+    list.mockResolvedValueOnce([{ ...book, storage_mode: 'linked', source_status: 'missing' }])
+    renderPage()
+    expect(await screen.findByText('原文件已移动')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '无法下载《海边的卡夫卡》：原文件已移动' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重新定位' }))
+    await waitFor(() => expect(relinkBook).toHaveBeenCalledWith('b1', 'epub'))
   })
 
   it('按分类和未分类筛选，并在具体分类下上传', async () => {

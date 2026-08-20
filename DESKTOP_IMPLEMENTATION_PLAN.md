@@ -16,8 +16,8 @@
 - Electron 获取单实例锁，读取或生成用户目录配置，以随机端口和随机桌面令牌启动 PyInstaller `onedir` sidecar。
 - sidecar 完成数据库版本检查与迁移后，通过 stdout 输出 READY JSON；Electron 随后加载 FastAPI 托管的前端。
 - 桌面模式下所有 `/api` 请求必须携带 Electron 注入的 `X-Desktop-Token`；Web 模式行为不变。
-- BrowserWindow 启用 `contextIsolation`、`sandbox`，关闭 `nodeIntegration`；preload 只暴露配置选择、重启、认证就绪和书籍导入事件。
-- 窗口关闭即优雅停止 sidecar，超时后终止进程树，不驻留托盘。
+- BrowserWindow 启用 `contextIsolation`、`sandbox`，关闭 `nodeIntegration`；preload 只暴露配置选择、重启、认证就绪、本地引用/重新定位和书籍导入事件。
+- 窗口关闭即优雅停止 sidecar 及独立 OCR 子进程，超时后终止进程树，不驻留托盘。
 
 ## 3. 配置、账号与数据库
 
@@ -30,8 +30,8 @@
 ## 4. 文件关联与打包
 
 - 注册 EPUB、PDF、TXT、MD、MARKDOWN 为可用打开方式，不强制替换系统默认程序。
-- 首实例和 `second-instance` 都将文件加入队列；登录后 main 使用现有 Cookie、CSRF 和桌面令牌流式上传。
-- 文件关联导入按用户与 SHA-256 去重，已有文件直接打开原书。
+- 首实例和 `second-instance` 都将文件加入队列；登录后 main 使用现有 Cookie、CSRF、桌面令牌和短时 HMAC 文件授权建立本地引用。
+- 文件关联按规范化绝对路径去重，不复制原件；应用只保存安全阅读缓存、索引、封面和 OCR 数据。
 - PyInstaller spec 显式收集 RapidOCR 模型、ONNX Runtime、OpenCV 与 PDFium；macOS 固定兼容 universal2 的 ONNX Runtime。
 - Electron Forge 生成 Windows Setup、两套 macOS DMG、Linux DEB/RPM；GitHub Actions 上传安装包、SHA-256、自检日志与体积报告。
 
@@ -42,4 +42,4 @@
 - 每个平台对冻结 sidecar 执行 `--self-test`，验证健康检查、前端、上传、数据库迁移和一次真实 OCR。
 - 首版不包含数据同步、远端 API 模式、共享数据库多客户端、托盘、签名、公证、应用商店和自动更新。
 
-最终验收：后端 53 项、前端 63 项、Electron 13 项测试通过；三套 Lint/TypeScript/Vite 检查通过；Windows PyInstaller sidecar 已完成自检、实际迁移、READY、令牌和优雅退出验证；Electron 应用目录与 Squirrel 安装包已实际生成，安装程序约 292 MB，并产出 SHA-256 清单。
+当前自动化验收：后端 66 项、前端 84 项、Electron 23 项测试通过；前端和 Electron 的 Lint、TypeScript 与构建检查通过。既有 Windows PyInstaller sidecar 自检、实际迁移、READY、令牌和优雅退出验证仍保留；Electron 应用目录与 Squirrel 安装包需在本次功能合入后重新构建。

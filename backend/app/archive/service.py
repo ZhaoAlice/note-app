@@ -95,6 +95,16 @@ def _model_json(value: str, label: str) -> dict[str, Any]:
     return parsed
 
 
+def _optional_model_json(value: str, label: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(409, f"{label} is invalid") from exc
+    if parsed is not None and not isinstance(parsed, dict):
+        raise HTTPException(409, f"{label} is invalid")
+    return parsed
+
+
 def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
     groups = list(db.scalars(select(Group).where(Group.user_id == user_id).order_by(Group.id)).all())
     tags = list(db.scalars(select(Tag).where(Tag.user_id == user_id).order_by(Tag.id)).all())
@@ -166,13 +176,24 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                 archive.writestr(note_path, note_bytes)
                 note_index.append({"id": note.id, "path": note_path, "sha256": _sha256(note_bytes)})
             for book in books:
-                source = book_dir / book.storage_name
+                if getattr(book, "storage_mode", "managed") == "linked":
+                    source_path = getattr(book, "source_path", None)
+                    source = Path(source_path) if source_path else Path()
+                    missing_detail = f"linked book source file is missing: {book.title}"
+                else:
+                    source = book_dir / book.storage_name if book.storage_name else Path()
+                    missing_detail = f"book file is missing: {book.original_name}"
                 if not source.is_file():
-                    raise HTTPException(409, f"book file is missing: {book.original_name}")
-                extension = Path(book.original_name).suffix.lower() or Path(book.storage_name).suffix.lower()
+                    raise HTTPException(409, missing_detail)
+                extension = Path(book.original_name).suffix.lower() or source.suffix.lower()
                 original_path = f"books/{book.id}/original{extension}"
                 actual_hash = _file_sha256(source)
                 if book.sha256 and actual_hash != book.sha256.lower():
+                    if getattr(book, "storage_mode", "managed") == "linked":
+                        raise HTTPException(
+                            409,
+                            f"linked book source has changed; open it before backup: {book.title}",
+                        )
                     raise HTTPException(409, f"book checksum mismatch: {book.original_name}")
                 archive.write(source, original_path)
                 cover_value: dict[str, Any] | None = None
@@ -192,7 +213,9 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                 state_value: dict[str, Any] | None = None
                 if book.reading_state is not None:
                     state_value = {
-                        "locator": _model_json(book.reading_state.locator, f"book {book.id} reading locator"),
+                        "locator": _optional_model_json(
+                            book.reading_state.locator, f"book {book.id} reading locator"
+                        ),
                         "progress": book.reading_state.progress,
                         "settings": _model_json(book.reading_state.settings, f"book {book.id} reading settings"),
                         "last_read_at": _datetime_out(book.reading_state.last_read_at),
@@ -623,7 +646,12 @@ def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArc
         state = book.get("reading_state")
         if state is not None:
             state = _mapping(state, f"book {book_id}.reading_state")
-            state["locator"] = _mapping(state.get("locator"), f"book {book_id}.reading_state.locator")
+            locator = state.get("locator")
+            state["locator"] = (
+                _mapping(locator, f"book {book_id}.reading_state.locator")
+                if locator is not None
+                else None
+            )
             state["settings"] = _mapping(state.get("settings"), f"book {book_id}.reading_state.settings")
             progress = state.get("progress")
             if not isinstance(progress, (int, float)) or isinstance(progress, bool) or not 0 <= progress <= 1:
@@ -848,7 +876,7 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
         book_dir.mkdir(parents=True, exist_ok=True)
         from ..book_files import prepare_book_file
 
-        def book_json(value: dict[str, Any]) -> str:
+        def book_json(value: Any) -> str:
             return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
         for raw in parsed.books:
@@ -921,6 +949,10 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
                 id=book_id,
                 user_id=user_id,
                 category=book_category_map.get(raw["category_id"]),
+                storage_mode="managed",
+                source_path=None,
+                source_path_hash=None,
+                source_mtime_ns=None,
                 title=title,
                 author=raw["author"],
                 format=raw["format"],

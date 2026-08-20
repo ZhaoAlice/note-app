@@ -75,9 +75,41 @@ if ($LASTEXITCODE -ne 0) { throw 'Desktop resource preparation failed.' }
 
 npm --prefix $desktopDir run test
 if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed.' }
-npm --prefix $desktopDir run make
-if ($LASTEXITCODE -ne 0) { throw 'Electron Forge packaging failed.' }
-node (Join-Path $PSScriptRoot 'checksums.mjs')
+$forgeBuildId = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+$forgeOut = Join-Path $desktopDir "out\build-$forgeBuildId"
+$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$forgeStage = [IO.Path]::GetFullPath((Join-Path $tempRoot "shijian-forge-$PID-$forgeBuildId"))
+if (-not $forgeStage.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Unsafe Forge staging path: $forgeStage"
+}
+Write-Host "Using isolated Forge staging directory: $forgeStage" -ForegroundColor DarkGray
+New-Item -ItemType Directory -Path $forgeStage -Force | Out-Null
+try {
+    foreach ($name in @('package.json', 'package-lock.json', 'forge.config.ts', 'tsconfig.json', 'src', 'dist', 'resources')) {
+        $source = Join-Path $desktopDir $name
+        if (-not (Test-Path -LiteralPath $source)) { throw "Desktop staging source is missing: $source" }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $forgeStage $name) -Recurse -Force
+    }
+    npm --prefix $forgeStage ci --prefer-offline --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'Forge staging dependency installation failed.' }
+    npm --prefix $forgeStage run make
+    if ($LASTEXITCODE -ne 0) { throw 'Electron Forge packaging failed.' }
+
+    $stageOut = Join-Path $forgeStage 'out'
+    if (-not (Test-Path -LiteralPath $stageOut -PathType Container)) {
+        throw "Forge did not create its output directory: $stageOut"
+    }
+    New-Item -ItemType Directory -Path $forgeOut -Force | Out-Null
+    Copy-Item -Path (Join-Path $stageOut '*') -Destination $forgeOut -Recurse -Force
+}
+finally {
+    $resolvedStage = [IO.Path]::GetFullPath($forgeStage)
+    if ($resolvedStage.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedStage)) {
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    }
+}
+$makeOut = Join-Path $forgeOut 'make'
+node (Join-Path $PSScriptRoot 'checksums.mjs') --root $makeOut
 if ($LASTEXITCODE -ne 0) { throw 'Desktop checksum generation failed.' }
 
-Write-Host "Desktop installers are available under $desktopDir\out\make" -ForegroundColor Green
+Write-Host "Desktop installers are available under $makeOut" -ForegroundColor Green

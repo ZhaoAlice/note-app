@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from .content import extract_text
@@ -74,12 +75,27 @@ def book_out(book: Book) -> BookDetail:
     ocr_progress = None
     if job:
         ocr_progress = job.pages_done / job.pages_total if job.pages_total else 0.0
+    source_status = None
+    if book.storage_mode == "linked":
+        try:
+            source = Path(book.source_path or "")
+            source_stat = source.stat()
+            if not source.is_file():
+                source_status = "missing"
+            elif source_stat.st_mtime_ns != book.source_mtime_ns or source_stat.st_size != book.size:
+                source_status = "changed"
+            else:
+                source_status = "available"
+        except OSError:
+            source_status = "missing"
     return BookDetail(
         id=book.id,
         title=book.title,
         author=book.author,
         category=BookCategoryOut.model_validate(book.category) if book.category else None,
         format=book.format,
+        storage_mode=book.storage_mode,
+        source_status=source_status,
         size=book.size,
         page_count=book.page_count,
         cover_url=f"/api/books/{book.id}/cover" if book.cover_storage_name else None,

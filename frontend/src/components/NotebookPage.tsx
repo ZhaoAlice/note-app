@@ -11,6 +11,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  LoaderCircle,
   LogOut,
   MoreHorizontal,
   Moon,
@@ -599,7 +600,7 @@ export default function NotebookPage({ user }: { user: User }) {
             <h1>{listTitle}</h1>
           </div>
           {status === 'active' && (
-            <button className="icon-button create-button" onClick={() => createNote.mutate()} disabled={createNote.isPending} aria-label="新建笔记"><Plus size={21} /></button>
+            <button className="icon-button create-button" onClick={() => createNote.mutate()} disabled={createNote.isPending} aria-label={createNote.isPending ? '正在新建笔记' : '新建笔记'}>{createNote.isPending ? <LoaderCircle className="spin" size={19} /> : <Plus size={21} />}</button>
           )}
           <button
             className="column-toggle sidebar-column-toggle"
@@ -679,7 +680,7 @@ export default function NotebookPage({ user }: { user: User }) {
               onPermanentDelete={() => { permanentlyDeleteListNote.reset(); return permanentlyDeleteListNote.mutateAsync(note.id) }}
             />
           ))}
-          {notes.data?.length === 0 && <EmptyState filtered={filtered} onCreate={() => createNote.mutate()} />}
+          {notes.data?.length === 0 && <EmptyState filtered={filtered} pending={createNote.isPending} error={createNote.isError ? createNote.error.message : undefined} onCreate={() => { createNote.reset(); createNote.mutate() }} />}
         </div>
         <footer className="sidebar-footer">
           <span>{notes.data?.length ?? 0} 篇笔记</span>
@@ -695,7 +696,8 @@ export default function NotebookPage({ user }: { user: User }) {
             <div className="welcome-paper"><BookOpenText size={34} /></div>
             <h2>{status === 'trash' ? '选择一篇已删除的笔记' : '选择一篇笔记开始书写'}</h2>
             <p>{status === 'trash' ? '你可以恢复它，或将它永久删除。' : '也可以新建一篇，把此刻的想法留下来。'}</p>
-            {status === 'active' && <button className="button primary" onClick={() => createNote.mutate()}><Plus size={17} />新建笔记</button>}
+            {status === 'active' && <button className="button primary" onClick={() => { createNote.reset(); createNote.mutate() }} disabled={createNote.isPending}>{createNote.isPending ? <LoaderCircle className="spin" size={15} /> : <Plus size={17} />}{createNote.isPending ? '创建中…' : '新建笔记'}</button>}
+            {createNote.isError && <p className="create-note-error" role="alert">创建失败：{createNote.error.message}</p>}
           </div>
         )}
       </section>

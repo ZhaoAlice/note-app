@@ -64,8 +64,16 @@ export function waitForSidecarReady(child: ChildProcessWithoutNullStreams, timeo
       child.stderr.off('data', onStderr)
       child.off('error', onError)
       child.off('exit', onExit)
-      if (error) reject(error)
-      else resolve(port as number)
+      if (error) {
+        reject(error)
+      } else {
+        // Uvicorn continues writing access and error logs after the READY line.
+        // Drain both pipes for the lifetime of the child; otherwise their OS
+        // buffers eventually fill and block every backend request.
+        child.stdout.resume()
+        child.stderr.resume()
+        resolve(port as number)
+      }
     }
     const onStderr = (chunk: Buffer): void => {
       stderr.push(chunk.toString('utf8'))

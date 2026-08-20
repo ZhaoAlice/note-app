@@ -50,13 +50,13 @@
 
 ### 书架与阅读
 
-- 独立书架支持上传并在线阅读 EPUB、PDF、TXT、Markdown；单本默认上限为 250 MiB。
+- 独立书架支持分类管理，并可上传或在桌面端直接引用 EPUB、PDF、TXT、Markdown；单本默认上限为 250 MiB。
 - 自动提取书名、作者和可用封面，也可手动修改书名、作者及封面。
 - 支持书内搜索、目录或页码跳转、分页/连续滚动、字号、字体、行距和主题设置。
 - 阅读进度、书签、高亮、下划线与文字批注保存到当前账号，可跨设备继续阅读。
-- 扫描 PDF 上传后由本地 RapidOCR 后台识别；识别期间仍可阅读，失败时可手动重试。
+- 扫描 PDF 上传后由独立的本地 RapidOCR 子进程识别；OCR 初始化或识别不会阻塞书架与笔记 API，失败时可手动重试。
 - 加密 PDF、DRM EPUB 和 MOBI/AZW3/FB2/CBZ 暂不支持；删除书籍会同时永久删除阅读数据。
-- 完整备份 ZIP 包含书籍原件、当前封面、元数据、阅读进度和批注；OCR 缓存会在恢复后重新生成。
+- 完整备份 ZIP 包含托管或本地引用的书籍原件、当前封面、分类、元数据、阅读进度和批注；OCR 缓存会在恢复后重新生成，恢复后的引用书籍转为普通托管书籍。
 
 ## 技术栈
 
@@ -212,7 +212,7 @@ export NOTE_STORAGE__ATTACHMENT_DIR=/srv/note-app/attachments
 
 ### 书籍与 OCR 存储
 
-书籍原件、安全阅读副本和封面默认保存在 `backend/data/books`。OCR 模型默认保存在 `backend/data/ocr-models`：
+上传书籍的原件、安全阅读副本和封面默认保存在 `backend/data/books`。桌面端本地引用模式不会复制原件，但仍会在该目录生成安全阅读副本、封面和索引。OCR 模型默认保存在 `backend/data/ocr-models`：
 
 ```yaml
 storage:
@@ -369,7 +369,8 @@ FastAPI 会在 <http://localhost:8000> 同时提供前端静态资源和 `/api`�
 - 随机本地端口和桌面令牌保护，不向其他本机页面暴露 API。
 - 空数据库自动创建“本地档案”；已有用户时保留原注册登录。
 - SQLite 升级前自动备份；远端数据库升级需在配置中显式设置 `desktop.allow_remote_migrations: true`。
-- EPUB、PDF、TXT、Markdown 文件关联，单实例转发并按 SHA-256 去重导入。
+- 书架“添加书籍”可选择复制到书架或引用本地文件；引用模式不复制原件，原文件移动后可继续缓存阅读并重新定位。
+- EPUB、PDF、TXT、Markdown 文件关联与单实例转发默认直接引用本地文件。
 - 关闭窗口时停止 OCR 和 sidecar，不驻留后台。
 
 安装 Node.js 24、Python 3.12、uv 后可在对应操作系统本机构建：
@@ -383,7 +384,7 @@ chmod +x scripts/desktop/build.sh
 ./scripts/desktop/build.sh
 ```
 
-构建脚本会编译前端、冻结 `ShijianBackend`、准备 OCR 模型、运行桌面测试并调用 Electron Forge。产物位于 `desktop/out/make`，并附带 `SHA256SUMS.txt`。Windows 实测未签名安装程序约 292 MB。
+构建脚本会编译前端、冻结 `ShijianBackend`、准备 OCR 模型、运行桌面测试并调用 Electron Forge。每次构建使用独立的 `desktop/out/build-<UTC时间>/make` 目录，避免旧 `app.asar` 被运行中的应用或编辑器锁定；目录内附带 `SHA256SUMS.txt`。Windows 实测未签名安装程序约 292 MB。
 
 Windows 本地构建会复用已经完整安装的 `node_modules`，避免运行中的 Vite 锁定 `esbuild.exe` 导致 `npm ci` 失败。需要强制清洁安装时可运行 `./scripts/desktop/build.ps1 -CleanInstall`，并先关闭当前仓库的 Vite 开发服务；确认依赖已经完整时也可使用 `-SkipInstall`。
 
@@ -391,4 +392,4 @@ GitHub Actions 的 “Desktop installers” 工作流可手动运行，或由 `d
 
 ## 当前边界
 
-当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、书籍 DRM/加密文件、手写批注、书架分类、桌面签名/自动更新、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。
+当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、书籍 DRM/加密文件、手写批注、桌面签名/自动更新、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。

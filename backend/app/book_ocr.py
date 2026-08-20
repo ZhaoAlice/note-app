@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import re
+import sys
 import threading
 import uuid
 from datetime import timedelta
@@ -192,7 +194,8 @@ def _process_pdf(book_id: str, token: str, settings: AppSettings) -> None:
             _update_job(db, book_id, token, status="failed", error="PDF 书籍不存在")
             db.commit()
             return
-        source_path = settings.book_path() / book.storage_name
+        source_name = book.reader_storage_name if book.storage_mode == "linked" else book.storage_name
+        source_path = settings.book_path() / source_name if source_name else settings.book_path() / ".missing"
         if not source_path.is_file():
             _update_job(db, book_id, token, status="failed", error="PDF 原文件缺失")
             db.commit()
@@ -277,12 +280,29 @@ def _fail_job(book_id: str, token: str, exc: Exception) -> None:
         db.commit()
 
 
+def process_claimed_job(book_id: str, token: str) -> int:
+    """Run one claimed OCR job in an isolated process."""
+    try:
+        _process_pdf(book_id, token, get_settings())
+    except Exception as exc:
+        _fail_job(book_id, token, exc)
+        return 1
+    return 0
+
+
+def _job_command(book_id: str, token: str) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--ocr-job", book_id, "--ocr-token", token]
+    return [sys.executable, "-m", "app.book_ocr", "--job", book_id, "--token", token]
+
+
 class OcrWorker:
     def __init__(self, settings: AppSettings):
         self.settings = settings
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
         if not _ocr_enabled(self.settings) or self._thread is not None:
@@ -293,9 +313,17 @@ class OcrWorker:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
         if self._thread is not None:
             self._thread.join(timeout=10)
             self._thread = None
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        self._process = None
 
     def wake(self) -> None:
         self._wake.set()
@@ -315,9 +343,21 @@ class OcrWorker:
                 continue
             book_id, token = claimed
             try:
-                _process_pdf(book_id, token, self.settings)
+                self._process = subprocess.Popen(
+                    _job_command(book_id, token),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                while self._process.poll() is None and not self._stop.wait(0.2):
+                    pass
+                if self._stop.is_set() and self._process.poll() is None:
+                    self._process.terminate()
+                self._process.wait(timeout=10)
             except Exception as exc:  # pragma: no cover - exercised through failure-state assertions
                 _fail_job(book_id, token, exc)
+            finally:
+                self._process = None
 
 
 _worker: OcrWorker | None = None
@@ -345,10 +385,15 @@ def wake_ocr_worker() -> None:
 def _main() -> None:
     parser = argparse.ArgumentParser(description="Prepare local OCR models for the book reader")
     parser.add_argument("--prepare", action="store_true", help="download/load configured OCR models")
+    parser.add_argument("--job")
+    parser.add_argument("--token")
     args = parser.parse_args()
-    if not args.prepare:
-        parser.error("use --prepare")
-    prepare_ocr_models()
+    if args.prepare:
+        prepare_ocr_models()
+        return
+    if args.job and args.token:
+        raise SystemExit(process_claimed_job(args.job, args.token))
+    parser.error("use --prepare or --job with --token")
 
 
 if __name__ == "__main__":

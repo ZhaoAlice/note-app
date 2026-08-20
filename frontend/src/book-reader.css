@@ -85,9 +85,10 @@
 .reader-progress-label { min-width: 34px; color: var(--reader-muted); font-size: 11px; text-align: right; }
 .reader-sidebar-toggle { display: none; }
 
-.reader-ocr-status {
+.reader-status-stack { position: relative; z-index: 24; min-width: 0; }
+.reader-ocr-status,
+.reader-source-status {
   position: relative;
-  z-index: 24;
   min-height: 34px;
   padding: 6px 18px;
   display: flex;
@@ -100,7 +101,14 @@
   font-size: 12px;
 }
 .reader-ocr-status.failed { color: #ba4b43; background: color-mix(in srgb, #ba4b43 10%, var(--reader-panel)); }
-.reader-ocr-status button { padding: 3px 7px; border: 1px solid currentColor; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; color: inherit; background: transparent; cursor: pointer; font-size: 11px; }
+.reader-source-status.changed { color: #87661f; background: color-mix(in srgb, #e9b949 16%, var(--reader-panel)); }
+.reader-source-status.failed,
+.reader-source-status.missing { color: #ba4b43; background: color-mix(in srgb, #ba4b43 10%, var(--reader-panel)); }
+.reader-source-status small { font-size: 10px; }
+.reader-ocr-status button,
+.reader-source-status button { padding: 3px 7px; border: 1px solid currentColor; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; color: inherit; background: transparent; cursor: pointer; font-size: 11px; }
+.reader-ocr-status button:disabled,
+.reader-source-status button:disabled { opacity: .55; cursor: default; }
 
 .reader-stage { min-width: 0; min-height: 0; grid-row: -2 / -1; transition: margin-right .2s ease; overflow: hidden; }
 .book-reader.sidebar-open .reader-stage { margin-right: 340px; }
@@ -123,7 +131,9 @@
   box-shadow: -12px 0 28px color-mix(in srgb, #000 8%, transparent);
   overflow-y: auto;
 }
-.book-reader:has(.reader-ocr-status) .reader-sidebar { top: 92px; }
+.book-reader.source-status-open .reader-sidebar,
+.book-reader.ocr-status-open .reader-sidebar { top: 92px; }
+.book-reader.source-status-open.ocr-status-open .reader-sidebar { top: 126px; }
 .reader-sidebar > header { position: sticky; top: 0; z-index: 2; height: 53px; padding: 0 14px 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--reader-border); background: var(--reader-panel); }
 .reader-sidebar > header h2 { margin: 0; font: 700 16px 'Noto Serif SC', serif; }
 
@@ -263,5 +273,5 @@
   .reader-sidebar { width: min(100%, 360px); box-shadow: -10px 0 28px rgb(0 0 0 / 18%); }
   .reader-text-viewport:not(.paginated),
   .sidebar-open .reader-text-viewport:not(.paginated) { padding: 28px 20px; }
-  .reader-ocr-status { justify-content: flex-start; flex-wrap: wrap; }
+  .reader-ocr-status, .reader-source-status { justify-content: flex-start; flex-wrap: wrap; }
 }

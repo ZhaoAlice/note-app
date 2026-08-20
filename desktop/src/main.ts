@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
-import { collectBookArguments, PendingBookImports, uploadBookFromDisk } from './book-import'
+import { collectBookArguments, linkBookFromDisk, PendingBookImports, relinkBookFromDisk } from './book-import'
 import { ensureDesktopConfig, importConfig, readCsrfCookieName, resolveUserDataDirectory } from './config'
 import { appendDesktopToken } from './headers'
 import { launchSidecar, resolveSidecarExecutable, stopSidecar, type RunningSidecar } from './sidecar'
@@ -24,6 +24,11 @@ let configPath = ''
 let csrfCookieName = 'note_csrf'
 let stopping = false
 let rendererAuthenticated = false
+
+const BOOK_FILE_FILTER: Electron.FileFilter = {
+  name: '书籍',
+  extensions: ['epub', 'pdf', 'txt', 'md', 'markdown'],
+}
 
 function resourcesDirectory(): string {
   return app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources')
@@ -95,35 +100,40 @@ function installDesktopTokenInterceptor(): void {
   )
 }
 
-async function importPendingBook(filePath: string): Promise<void> {
+function notifyBookImported(bookId: string): BookImportedEvent {
+  const payload: BookImportedEvent = { bookId }
+  mainWindow?.webContents.send(IPC_CHANNELS.bookImported, payload)
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus()
+  return payload
+}
+
+async function linkLocalBook(filePath: string, categoryId?: string | null): Promise<BookImportedEvent> {
   const cookies = await session.defaultSession.cookies.get({ url: baseUrl })
-  const imported = await uploadBookFromDisk({
+  const imported = await linkBookFromDisk({
     baseUrl,
-    filePath,
+    sourcePath: filePath,
+    categoryId,
     desktopToken,
     csrfCookieName,
     cookies,
   })
-  const payload: BookImportedEvent = { bookId: imported.bookId }
-  mainWindow?.webContents.send(IPC_CHANNELS.bookImported, payload)
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    // The renderer subscribes before calling authReady and performs SPA navigation,
-    // so this event is not lost to a full-page reload.
-    mainWindow.focus()
-  }
+  return notifyBookImported(imported.bookId)
+}
+
+async function linkPendingBook(filePath: string): Promise<void> {
+  await linkLocalBook(filePath)
 }
 
 async function flushPendingBooks(): Promise<void> {
   try {
-    await pendingBooks.flush(importPendingBook)
+    await pendingBooks.flush(linkPendingBook)
   } catch (error) {
-    rendererAuthenticated = false
     const message = error instanceof Error ? error.message : String(error)
     const options: Electron.MessageBoxOptions = {
       type: 'error',
-      title: '书籍导入失败',
+      title: '本地书籍引用失败',
       message,
-      detail: '文件仍保留在待导入队列中，登录后可再次触发导入。',
+      detail: '文件仍保留在待处理队列中；请确认原文件仍存在，并在登录后再次打开该文件。',
     }
     if (mainWindow) await dialog.showMessageBox(mainWindow, options)
     else await dialog.showMessageBox(options)
@@ -158,6 +168,77 @@ function configureIpc(userDataDir: string): void {
     rendererAuthenticated = true
     await flushPendingBooks()
   })
+  ipcMain.handle(IPC_CHANNELS.selectLinkedBooks, async (_event, categoryId?: unknown) => {
+    if (categoryId !== undefined && categoryId !== null && typeof categoryId !== 'string') {
+      throw new TypeError('分类 ID 必须是字符串或空值')
+    }
+    const options: Electron.OpenDialogOptions = {
+      title: '引用本地书籍',
+      properties: ['openFile', 'multiSelections'],
+      filters: [BOOK_FILE_FILTER],
+    }
+    const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    if (selected.canceled) return []
+
+    const imported: BookImportedEvent[] = []
+    const failures: string[] = []
+    for (const filePath of selected.filePaths) {
+      try {
+        imported.push(await linkLocalBook(filePath, categoryId as string | null | undefined))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push(`${path.basename(filePath)}：${message}`)
+      }
+    }
+    if (failures.length > 0) {
+      const messageOptions: Electron.MessageBoxOptions = {
+        type: 'error',
+        title: '部分书籍引用失败',
+        message: `${failures.length} 本书籍未能引用`,
+        detail: failures.slice(0, 8).join('\n'),
+      }
+      if (mainWindow) await dialog.showMessageBox(mainWindow, messageOptions)
+      else await dialog.showMessageBox(messageOptions)
+    }
+    return imported
+  })
+  ipcMain.handle(IPC_CHANNELS.relinkBook, async (_event, bookId: unknown, expectedFormat?: unknown) => {
+    if (typeof bookId !== 'string' || !bookId) throw new TypeError('书籍 ID 无效')
+    if (expectedFormat !== undefined && typeof expectedFormat !== 'string') throw new TypeError('书籍格式无效')
+    const expectedExtensions = expectedBookExtensions(expectedFormat as string | undefined)
+    const options: Electron.OpenDialogOptions = {
+      title: '重新定位本地书籍',
+      properties: ['openFile'],
+      filters: [{ name: expectedFormat ? `${expectedFormat.toUpperCase()} 书籍` : BOOK_FILE_FILTER.name, extensions: expectedExtensions }],
+    }
+    const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    const sourcePath = selected.filePaths[0]
+    if (selected.canceled || !sourcePath) return null
+    if (!expectedExtensions.includes(path.extname(sourcePath).slice(1).toLowerCase())) {
+      throw new Error(`请选择 ${expectedExtensions.map((extension) => `.${extension}`).join(' / ')} 格式的书籍`)
+    }
+    const cookies = await session.defaultSession.cookies.get({ url: baseUrl })
+    const relinked = await relinkBookFromDisk({
+      baseUrl,
+      sourcePath,
+      bookId,
+      desktopToken,
+      csrfCookieName,
+      cookies,
+    })
+    return notifyBookImported(relinked.bookId)
+  })
+}
+
+function expectedBookExtensions(expectedFormat?: string): string[] {
+  switch (expectedFormat?.trim().toLowerCase()) {
+    case 'epub': return ['epub']
+    case 'pdf': return ['pdf']
+    case 'txt': return ['txt']
+    case 'md':
+    case 'markdown': return ['md', 'markdown']
+    default: return BOOK_FILE_FILTER.extensions
+  }
 }
 
 function runRegistry(arguments_: string[]): Promise<void> {

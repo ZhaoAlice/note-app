@@ -81,6 +81,9 @@ def test_text_book_lifecycle_state_annotations_search_and_cover(client):
     book = uploaded.json()
     assert book["title"] == "story"
     assert book["format"] == "txt"
+    assert book["storage_mode"] == "managed"
+    assert book["source_status"] is None
+    assert "source_path" not in book
     assert book["ocr_status"] is None
     assert book["progress"] == 0
     assert book["ocr_error"] is None

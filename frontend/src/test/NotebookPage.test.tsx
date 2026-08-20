@@ -64,6 +64,17 @@ describe('NotebookPage', () => {
     await waitFor(() => expect(list).toHaveBeenLastCalledWith({ status: 'active', q: '相机', tag: undefined, group_id: undefined, ungrouped: false }))
   })
 
+  it('新建笔记失败时显示明确反馈', async () => {
+    list.mockResolvedValue([])
+    create.mockRejectedValue(new Error('桌面服务暂时无响应'))
+    renderPage()
+    const empty = (await screen.findByText('这里还没有笔记')).closest('.empty-state') as HTMLElement
+
+    fireEvent.click(within(empty).getByRole('button', { name: '新建笔记' }))
+
+    expect(await within(empty).findByRole('alert')).toHaveTextContent('创建失败：桌面服务暂时无响应')
+  })
+
   it('支持标签和回收站筛选', async () => {
     renderPage()
     const filters = await screen.findByLabelText('按标签筛选')

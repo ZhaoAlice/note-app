@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -52,8 +53,11 @@ class _FakePage:
 
 
 class _FakeDocument:
+    expected_name = "scan.pdf"
+
     def __init__(self, path):
         assert Path(path).is_file()
+        assert Path(path).name == self.expected_name
 
     def __len__(self):
         return 1
@@ -78,7 +82,16 @@ class _FakeRapidOCR:
         )
 
 
-def test_ocr_worker_claims_scanned_pdf_and_persists_normalized_boxes(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("storage_mode", "storage_name", "reader_storage_name", "expected_name"),
+    [
+        ("managed", "scan.pdf", "safe.pdf", "scan.pdf"),
+        ("linked", None, "safe.pdf", "safe.pdf"),
+    ],
+)
+def test_ocr_worker_claims_scanned_pdf_and_persists_normalized_boxes(
+    tmp_path, monkeypatch, storage_mode, storage_name, reader_storage_name, expected_name
+):
     engine = create_engine(f"sqlite:///{(tmp_path / 'ocr.db').as_posix()}")
     TestingSession = sessionmaker(bind=engine, expire_on_commit=False)
     Base.metadata.create_all(engine)
@@ -87,6 +100,8 @@ def test_ocr_worker_claims_scanned_pdf_and_persists_normalized_boxes(tmp_path, m
     settings.storage.book_dir = str(tmp_path / "books")
     settings.book_path().mkdir(parents=True)
     (settings.book_path() / "scan.pdf").write_bytes(b"%PDF-fake")
+    (settings.book_path() / "safe.pdf").write_bytes(b"%PDF-safe")
+    _FakeDocument.expected_name = expected_name
     try:
         with TestingSession() as db:
             user = User(username="ocr", normalized_username="ocr", password_hash="test")
@@ -98,8 +113,9 @@ def test_ocr_worker_claims_scanned_pdf_and_persists_normalized_boxes(tmp_path, m
                 author=None,
                 format="pdf",
                 original_name="scan.pdf",
-                storage_name="scan.pdf",
-                reader_storage_name="scan.pdf",
+                storage_mode=storage_mode,
+                storage_name=storage_name,
+                reader_storage_name=reader_storage_name,
                 sha256="0" * 64,
                 size=9,
                 search_text="扫描书",
@@ -145,3 +161,27 @@ def test_ocr_worker_claims_scanned_pdf_and_persists_normalized_boxes(tmp_path, m
         settings.storage.book_dir = previous_book_dir
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_ocr_job_command_uses_a_separate_python_process(monkeypatch):
+    monkeypatch.setattr(book_ocr.sys, "frozen", False, raising=False)
+
+    command = book_ocr._job_command("book-1", "claim-token")
+
+    assert command == [
+        sys.executable,
+        "-m",
+        "app.book_ocr",
+        "--job",
+        "book-1",
+        "--token",
+        "claim-token",
+    ]
+
+
+def test_frozen_ocr_job_command_reuses_the_sidecar_executable(monkeypatch):
+    monkeypatch.setattr(book_ocr.sys, "frozen", True, raising=False)
+
+    command = book_ocr._job_command("book-1", "claim-token")
+
+    assert command == [sys.executable, "--ocr-job", "book-1", "--ocr-token", "claim-token"]

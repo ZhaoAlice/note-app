@@ -8,6 +8,8 @@ const IPC_CHANNELS = {
   openConfigDirectory: 'desktop:open-config-directory',
   restartApp: 'desktop:restart-app',
   authReady: 'desktop:auth-ready',
+  selectLinkedBooks: 'desktop:select-linked-books',
+  relinkBook: 'desktop:relink-book',
   bookImported: 'desktop:book-imported',
 } as const
 
@@ -22,6 +24,8 @@ const desktopApi: DesktopApi = {
   openConfigDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.openConfigDirectory) as Promise<void>,
   restartApp: () => ipcRenderer.invoke(IPC_CHANNELS.restartApp) as Promise<void>,
   authReady: () => ipcRenderer.invoke(IPC_CHANNELS.authReady) as Promise<void>,
+  selectLinkedBooks: (categoryId) => ipcRenderer.invoke(IPC_CHANNELS.selectLinkedBooks, categoryId) as Promise<BookImportedEvent[]>,
+  relinkBook: (bookId, expectedFormat) => ipcRenderer.invoke(IPC_CHANNELS.relinkBook, bookId, expectedFormat) as Promise<BookImportedEvent | null>,
   onBookImported: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: BookImportedEvent): void => callback(payload)
     ipcRenderer.on(IPC_CHANNELS.bookImported, listener)

@@ -8,6 +8,8 @@ export interface DesktopApi {
   openConfigDirectory(): Promise<void>
   restartApp(): Promise<void>
   authReady(): Promise<void>
+  selectLinkedBooks(categoryId?: string | null): Promise<BookImportedEvent[]>
+  relinkBook(bookId: string, expectedFormat?: string): Promise<BookImportedEvent | null>
   onBookImported(callback: (event: BookImportedEvent) => void): () => void
 }
 
@@ -16,5 +18,7 @@ export const IPC_CHANNELS = {
   openConfigDirectory: 'desktop:open-config-directory',
   restartApp: 'desktop:restart-app',
   authReady: 'desktop:auth-ready',
+  selectLinkedBooks: 'desktop:select-linked-books',
+  relinkBook: 'desktop:relink-book',
   bookImported: 'desktop:book-imported',
 } as const
