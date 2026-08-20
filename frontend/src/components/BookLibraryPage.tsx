@@ -222,9 +222,12 @@ export default function BookLibraryPage({ user }: { user: User }) {
                   <div className="book-card-body">
                     <div className="book-card-heading"><span className="book-format">{formatLabels[book.format]}</span><span>{displaySize(book.size)}</span></div>
                     <Link to={`/books/${book.id}/read`}><h2>{book.title}</h2></Link>
-                    <p className="book-author">{book.author || '未知作者'}</p>
-                    <div className="book-progress" aria-label={`阅读进度 ${readProgress}%`}><span><i style={{ width: `${readProgress}%` }} /></span><b>{readProgress}%</b></div>
-                    {book.ocr_status && book.ocr_status !== 'not_required' && (
+                    <p className="book-author"><span>作者</span>{book.author || '未知'}</p>
+                    <div className="book-progress" aria-label={`阅读进度 ${readProgress}%`}>
+                      <div><span>阅读进度</span><b>{readProgress}%</b></div>
+                      <span><i style={{ width: `${readProgress}%` }} /></span>
+                    </div>
+                    {book.ocr_status && !['not_required', 'completed'].includes(book.ocr_status) && (
                       <div className={`book-ocr ${book.ocr_status}`}>
                         <span>{ocrLabels[book.ocr_status]}</span>
                         {book.ocr_status === 'running' && <small>{ocrProgress}%</small>}
