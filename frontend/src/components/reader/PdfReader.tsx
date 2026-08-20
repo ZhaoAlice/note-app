@@ -133,7 +133,6 @@ function PdfPage({
   bookId,
   forceVisible,
   onSelection,
-  onVisible,
   pageIndex,
   target,
   width,
@@ -142,7 +141,6 @@ function PdfPage({
   bookId: string
   forceVisible?: boolean
   onSelection: ReaderAdapterProps['onSelection']
-  onVisible: (pageIndex: number) => void
   pageIndex: number
   target: BookLocation | null
   width: number
@@ -158,19 +156,22 @@ function PdfPage({
     }
     const element = wrapperRef.current
     if (!element) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true)
+      return
+    }
     const observer = new IntersectionObserver((entries) => {
       const entry = entries[0]
       if (!entry) return
       if (entry.isIntersecting) {
         setVisible(true)
-        onVisible(pageIndex)
       } else if (entry.intersectionRatio === 0) {
         setVisible(false)
       }
     }, { rootMargin: '900px 0px', threshold: [0, 0.35] })
     observer.observe(element)
     return () => observer.disconnect()
-  }, [forceVisible, onVisible, pageIndex])
+  }, [forceVisible])
 
   const selectNativeText = () => {
     const selection = window.getSelection()
@@ -226,8 +227,10 @@ export default function PdfReader({
   onSelection,
 }: ReaderAdapterProps) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const scrollFrameRef = useRef<number | null>(null)
   const [numberOfPages, setNumberOfPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(initialLocation?.kind === 'pdf' ? initialLocation.page_index : 0)
+  const currentPageRef = useRef(currentPage)
   const [pageWidth, setPageWidth] = useState(760)
   const bookId = useMemo(() => decodeURIComponent(url.match(/\/api\/books\/([^/]+)\/content/)?.[1] ?? ''), [url])
   const continuous = settings.layout !== 'single-page'
@@ -243,6 +246,8 @@ export default function PdfReader({
   }, [])
 
   const reportPage = useCallback((pageIndex: number) => {
+    if (currentPageRef.current === pageIndex) return
+    currentPageRef.current = pageIndex
     setCurrentPage(pageIndex)
     onPositionChange({
       location: { kind: 'pdf', page_index: pageIndex },
@@ -250,20 +255,58 @@ export default function PdfReader({
     })
   }, [numberOfPages, onPositionChange])
 
+  const updatePageFromScroll = useCallback(() => {
+    scrollFrameRef.current = null
+    const host = hostRef.current
+    if (!host || !continuous) return
+    const hostRect = host.getBoundingClientRect()
+    let bestPage = -1
+    let bestVisibleHeight = -1
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const element of host.querySelectorAll<HTMLElement>('[data-pdf-page]')) {
+      const rect = element.getBoundingClientRect()
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, hostRect.bottom) - Math.max(rect.top, hostRect.top))
+      if (visibleHeight <= 0) continue
+      const pageIndex = Number(element.dataset.pdfPage)
+      const distance = Math.abs(rect.top + rect.height / 2 - (hostRect.top + hostRect.height / 2))
+      if (visibleHeight > bestVisibleHeight || (visibleHeight === bestVisibleHeight && distance < bestDistance)) {
+        bestPage = pageIndex
+        bestVisibleHeight = visibleHeight
+        bestDistance = distance
+      }
+    }
+    if (bestPage >= 0) reportPage(bestPage)
+  }, [continuous, reportPage])
+
+  const handleScroll = useCallback(() => {
+    if (scrollFrameRef.current !== null) return
+    scrollFrameRef.current = window.requestAnimationFrame(updatePageFromScroll)
+  }, [updatePageFromScroll])
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current)
+  }, [])
+
+  const scrollToPage = useCallback((pageIndex: number) => {
+    const host = hostRef.current
+    const page = host?.querySelector<HTMLElement>(`[data-pdf-page="${pageIndex}"]`)
+    if (host && page) host.scrollTo({ top: Math.max(0, page.offsetTop - 8) })
+  }, [])
+
   useEffect(() => {
     if (targetLocation?.kind !== 'pdf') return
     const page = Math.max(0, Math.min(numberOfPages - 1, targetLocation.page_index))
+    currentPageRef.current = page
     setCurrentPage(page)
-    if (continuous) {
-      window.requestAnimationFrame(() => document.querySelector(`[data-pdf-page="${page}"]`)?.scrollIntoView({ block: 'start' }))
-    }
-  }, [continuous, numberOfPages, targetLocation])
+    if (continuous) window.requestAnimationFrame(() => scrollToPage(page))
+  }, [continuous, numberOfPages, scrollToPage, targetLocation])
 
   const goToPage = (page: number) => {
     const next = Math.max(0, Math.min(numberOfPages - 1, page))
+    currentPageRef.current = -1
     setCurrentPage(next)
     reportPage(next)
-    if (continuous) document.querySelector(`[data-pdf-page="${next}"]`)?.scrollIntoView({ block: 'start' })
+    if (continuous) scrollToPage(next)
   }
 
   return (
@@ -274,23 +317,28 @@ export default function PdfReader({
         <span>/ {numberOfPages || '—'}</span>
         <button aria-label="下一页" disabled={currentPage >= numberOfPages - 1} onClick={() => goToPage(currentPage + 1)} type="button">›</button>
       </div>
-      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} ref={hostRef}>
+      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} onScroll={handleScroll} ref={hostRef}>
         <Document
           error={<p className="reader-adapter-message error">PDF 加载失败。</p>}
           file={url}
           loading={<p className="reader-adapter-message">正在加载 PDF…</p>}
           onLoadSuccess={({ numPages }) => {
             setNumberOfPages(numPages)
-            setCurrentPage((value) => Math.max(0, Math.min(numPages - 1, value)))
+            setCurrentPage((value) => {
+              const next = Math.max(0, Math.min(numPages - 1, value))
+              currentPageRef.current = next
+              return next
+            })
+            window.requestAnimationFrame(handleScroll)
           }}
           options={PDF_DOCUMENT_OPTIONS}
         >
           {continuous
             ? Array.from({ length: numberOfPages }, (_, pageIndex) => (
-              <PdfPage annotations={annotations} bookId={bookId} key={pageIndex} onSelection={onSelection} onVisible={reportPage} pageIndex={pageIndex} target={targetLocation} width={pageWidth} />
+              <PdfPage annotations={annotations} bookId={bookId} key={pageIndex} onSelection={onSelection} pageIndex={pageIndex} target={targetLocation} width={pageWidth} />
             ))
             : numberOfPages > 0 && (
-              <PdfPage annotations={annotations} bookId={bookId} forceVisible onSelection={onSelection} onVisible={reportPage} pageIndex={currentPage} target={targetLocation} width={pageWidth} />
+              <PdfPage annotations={annotations} bookId={bookId} forceVisible onSelection={onSelection} pageIndex={currentPage} target={targetLocation} width={pageWidth} />
             )}
         </Document>
       </div>
