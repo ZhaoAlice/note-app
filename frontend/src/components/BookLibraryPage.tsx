@@ -1,24 +1,34 @@
-import { useDeferredValue, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useDeferredValue, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   BookOpen,
+  Check,
   Download,
   FilePlus2,
+  Folder,
+  FolderOpen,
   ImagePlus,
   LoaderCircle,
   LogOut,
+  Moon,
+  Palette,
   Pencil,
+  Plus,
   Search,
+  Sun,
   Trash2,
   Upload,
   X,
 } from 'lucide-react'
-import { authApi, booksApi, type BookFilters } from '../api'
-import { relativeDate } from '../time'
-import type { BookFormat, BookSummary, User } from '../types'
+import { authApi, bookCategoriesApi, booksApi, type BookFilters, type BookPatch } from '../api'
+import { formatLongDate, relativeDate } from '../time'
+import type { BookCategory, BookFormat, BookSummary, User } from '../types'
+import { applyTheme, getTheme, themes, type ThemeId } from '../theme'
 import AppNavigation from './AppNavigation'
 import ConfirmDialog from './ConfirmDialog'
+import DataManagementDialog from './DataManagementDialog'
+import DesktopSettings from './DesktopSettings'
 
 const acceptedBookTypes = '.epub,.pdf,.txt,.md,.markdown'
 const acceptedCoverTypes = 'image/jpeg,image/png,image/webp'
@@ -66,22 +76,28 @@ function BookCover({ book }: { book: BookSummary }) {
 
 type EditorProps = {
   book: BookSummary
+  categories: BookCategory[]
   busy: boolean
   error?: string
   onClose: () => void
-  onSave: (patch: { title: string; author: string | null }) => void
+  onSave: (patch: BookPatch) => void
   onCover: (file: File) => void
   onRemoveCover: () => void
 }
 
-function BookEditor({ book, busy, error, onClose, onSave, onCover, onRemoveCover }: EditorProps) {
+function BookEditor({ book, categories, busy, error, onClose, onSave, onCover, onRemoveCover }: EditorProps) {
   const [title, setTitle] = useState(book.title)
   const [author, setAuthor] = useState(book.author ?? '')
+  const [categoryId, setCategoryId] = useState(book.category?.id ?? '')
 
   function submit(event: FormEvent) {
     event.preventDefault()
     const cleanTitle = title.trim()
-    if (cleanTitle) onSave({ title: cleanTitle, author: author.trim() || null })
+    if (cleanTitle) {
+      const patch: BookPatch = { title: cleanTitle, author: author.trim() || null }
+      if (categoryId !== (book.category?.id ?? '')) patch.category_id = categoryId || null
+      onSave(patch)
+    }
   }
 
   return (
@@ -107,6 +123,11 @@ function BookEditor({ book, busy, error, onClose, onSave, onCover, onRemoveCover
           <input id="book-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={255} required autoFocus />
           <label htmlFor="book-author">作者</label>
           <input id="book-author" value={author} onChange={(event) => setAuthor(event.target.value)} maxLength={255} placeholder="未知作者" />
+          <label htmlFor="book-category">书架分类</label>
+          <select id="book-category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+            <option value="">未分类</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
           {error && <p className="book-form-error" role="alert">{error}</p>}
           <div className="book-dialog-actions">
             <button className="button compact" type="button" onClick={onClose} disabled={busy}>取消</button>
@@ -118,6 +139,191 @@ function BookEditor({ book, busy, error, onClose, onSave, onCover, onRemoveCover
   )
 }
 
+function BookCategoryEditor({
+  book,
+  categories,
+  busy,
+  error,
+  onClose,
+  onSave,
+}: {
+  book: BookSummary
+  categories: BookCategory[]
+  busy: boolean
+  error?: string
+  onClose: () => void
+  onSave: (categoryId: string | null) => void
+}) {
+  const initialCategoryId = book.category?.id ?? ''
+  const [categoryId, setCategoryId] = useState(initialCategoryId)
+
+  return (
+    <div className="book-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
+      <section className="book-dialog book-category-dialog" role="dialog" aria-modal="true" aria-labelledby="book-category-editor-title">
+        <header>
+          <div><p className="eyebrow">整理书架</p><h2 id="book-category-editor-title">设置《{book.title}》的分类</h2></div>
+          <button className="book-icon-button" type="button" onClick={onClose} disabled={busy} aria-label="关闭分类设置"><X size={18} /></button>
+        </header>
+        <form onSubmit={(event) => { event.preventDefault(); onSave(categoryId || null) }}>
+          <label htmlFor="book-category-assignment">书架分类</label>
+          <select id="book-category-assignment" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} autoFocus>
+            <option value="">未分类</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+          {error && <p className="book-form-error" role="alert">{error}</p>}
+          <div className="book-dialog-actions">
+            <button className="button compact" type="button" onClick={onClose} disabled={busy}>取消</button>
+            <button className="button primary compact" type="submit" disabled={busy || categoryId === initialCategoryId}>{busy ? '保存中…' : '保存分类'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  )
+}
+
+type CategoryNavigationProps = {
+  categories: BookCategory[]
+  pending: boolean
+  error?: string
+  selected: string | null | undefined
+  onSelect: (categoryId: string | null | undefined) => void
+  onRetry: () => void
+}
+
+function CategoryNavigation({ categories, pending, error, selected, onSelect, onRetry }: CategoryNavigationProps) {
+  const queryClient = useQueryClient()
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [renaming, setRenaming] = useState<BookCategory | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [deleting, setDeleting] = useState<BookCategory | null>(null)
+
+  async function refreshLibrary() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+      queryClient.invalidateQueries({ queryKey: ['books'] }),
+    ])
+  }
+
+  const createCategory = useMutation({
+    mutationFn: (name: string) => bookCategoriesApi.create(name),
+    onSuccess: async (category) => {
+      setNewName('')
+      setCreating(false)
+      onSelect(category.id)
+      await refreshLibrary()
+    },
+  })
+  const renameCategory = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => bookCategoriesApi.rename(id, name),
+    onSuccess: async () => {
+      setRenaming(null)
+      setRenameName('')
+      await refreshLibrary()
+    },
+  })
+  const removeCategory = useMutation({
+    mutationFn: (id: string) => bookCategoriesApi.remove(id),
+    onSuccess: async (_, removedId) => {
+      if (selected === removedId) onSelect(null)
+      setDeleting(null)
+      await refreshLibrary()
+    },
+  })
+
+  useEffect(() => {
+    if (!deleting) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !removeCategory.isPending) setDeleting(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [deleting, removeCategory.isPending])
+
+  function submitCreate(event: FormEvent) {
+    event.preventDefault()
+    const name = newName.trim()
+    if (name) createCategory.mutate(name)
+  }
+
+  function submitRename(event: FormEvent) {
+    event.preventDefault()
+    const name = renameName.trim()
+    if (renaming && name) renameCategory.mutate({ id: renaming.id, name })
+  }
+
+  return (
+    <aside className="book-category-panel">
+      <div className="book-category-panel-heading">
+        <div><p className="eyebrow">整理书架</p><h2>分类</h2></div>
+        <button
+          className="book-icon-button"
+          type="button"
+          aria-label={creating ? '关闭新建分类' : '新建分类'}
+          title={creating ? '关闭新建分类' : '新建分类'}
+          onClick={() => {
+            createCategory.reset()
+            setCreating((value) => !value)
+            setNewName('')
+          }}
+        >{creating ? <X size={16} /> : <Plus size={16} />}</button>
+      </div>
+      <nav className="book-category-nav" aria-label="书架分类">
+        <button type="button" className={selected === undefined ? 'active' : ''} aria-current={selected === undefined ? 'page' : undefined} onClick={() => onSelect(undefined)}>
+          <BookOpen size={16} /><span>全部书籍</span>
+        </button>
+        <button type="button" className={selected === null ? 'active' : ''} aria-current={selected === null ? 'page' : undefined} onClick={() => onSelect(null)}>
+          <FolderOpen size={16} /><span>未分类</span>
+        </button>
+        {categories.map((category) => (
+          <div className="book-category-item" key={category.id}>
+            <div className={`book-category-row ${selected === category.id ? 'active' : ''}`}>
+              {renaming?.id === category.id ? (
+                <form className="book-category-inline-form" onSubmit={submitRename}>
+                  <input aria-label={`重命名分类 ${category.name}`} value={renameName} onChange={(event) => setRenameName(event.target.value)} maxLength={50} autoFocus />
+                  <button type="submit" aria-label="保存分类名称" disabled={!renameName.trim() || renameCategory.isPending}><Check size={14} /></button>
+                  <button type="button" aria-label="取消重命名" onClick={() => { renameCategory.reset(); setRenaming(null) }}><X size={14} /></button>
+                </form>
+              ) : (
+                <>
+                  <button type="button" className="book-category-select" aria-current={selected === category.id ? 'page' : undefined} onClick={() => onSelect(category.id)}>
+                    <Folder size={16} /><span>{category.name}</span>
+                  </button>
+                  <span className="book-category-actions">
+                    <button type="button" aria-label={`重命名分类 ${category.name}`} title="重命名" onClick={() => { renameCategory.reset(); setRenaming(category); setRenameName(category.name) }}><Pencil size={13} /></button>
+                    <button type="button" aria-label={`删除分类 ${category.name}`} aria-expanded={deleting?.id === category.id} title="删除" onClick={() => { removeCategory.reset(); setDeleting(category) }}><Trash2 size={13} /></button>
+                  </span>
+                </>
+              )}
+            </div>
+            {deleting?.id === category.id && (
+              <section className="book-category-delete-popover" role="dialog" aria-modal="false" aria-labelledby={`delete-category-${category.id}`}>
+                <strong id={`delete-category-${category.id}`}>删除“{category.name}”？</strong>
+                <p>其中书籍将移至“未分类”，阅读数据会保留。</p>
+                {removeCategory.isError && <p className="book-category-delete-error" role="alert">{removeCategory.error.message}</p>}
+                <div>
+                  <button className="button compact" type="button" disabled={removeCategory.isPending} onClick={() => setDeleting(null)}>取消</button>
+                  <button className="button compact danger" type="button" disabled={removeCategory.isPending} onClick={() => removeCategory.mutate(category.id)}>{removeCategory.isPending ? '删除中…' : '删除分类'}</button>
+                </div>
+              </section>
+            )}
+          </div>
+        ))}
+      </nav>
+      {creating && (
+        <form className="book-category-create" onSubmit={submitCreate}>
+          <label htmlFor="new-book-category">分类名称</label>
+          <div><input id="new-book-category" value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { createCategory.reset(); setCreating(false); setNewName('') } }} maxLength={50} autoFocus placeholder="例如：小说" /><button type="submit" disabled={!newName.trim() || createCategory.isPending}>{createCategory.isPending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}<span className="visually-hidden">创建分类</span></button><button type="button" aria-label="取消新建分类" onClick={() => { createCategory.reset(); setCreating(false); setNewName('') }}><X size={15} /></button></div>
+        </form>
+      )}
+      {pending && <p className="book-category-state"><LoaderCircle className="spin" size={14} />正在加载分类…</p>}
+      {error && <p className="book-category-state error" role="alert"><span>分类加载失败：{error}</span><button className="text-button" type="button" onClick={onRetry}>重试</button></p>}
+      {createCategory.isError && <p className="book-category-state error" role="alert">创建失败：{createCategory.error.message}</p>}
+      {renameCategory.isError && <p className="book-category-state error" role="alert">重命名失败：{renameCategory.error.message}</p>}
+    </aside>
+  )
+}
+
 export default function BookLibraryPage({ user }: { user: User }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -126,9 +332,25 @@ export default function BookLibraryPage({ user }: { user: User }) {
   const deferredSearch = useDeferredValue(search.trim())
   const [format, setFormat] = useState<BookFormat | ''>('')
   const [sort, setSort] = useState<NonNullable<BookFilters['sort']>>('recent')
+  const [selectedCategory, setSelectedCategory] = useState<string | null | undefined>(undefined)
   const [editing, setEditing] = useState<BookSummary | null>(null)
+  const [categorizing, setCategorizing] = useState<BookSummary | null>(null)
   const [deleting, setDeleting] = useState<BookSummary | null>(null)
-  const filters: BookFilters = { q: deferredSearch || undefined, format: format || undefined, sort }
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [dataManagementOpen, setDataManagementOpen] = useState(false)
+  const [displayNameDraft, setDisplayNameDraft] = useState(user.display_name ?? '')
+  const [theme, setTheme] = useState<ThemeId>(getTheme)
+  const filters: BookFilters = {
+    sort,
+    ...(deferredSearch ? { q: deferredSearch } : {}),
+    ...(format ? { format } : {}),
+    ...(typeof selectedCategory === 'string' ? { category_id: selectedCategory } : {}),
+    ...(selectedCategory === null ? { uncategorized: true } : {}),
+  }
+  const categories = useQuery({
+    queryKey: ['book-categories'],
+    queryFn: bookCategoriesApi.list,
+  })
   const books = useQuery({
     queryKey: ['books', filters],
     queryFn: () => booksApi.list(filters),
@@ -136,12 +358,31 @@ export default function BookLibraryPage({ user }: { user: User }) {
   })
 
   const uploadBook = useMutation({
-    mutationFn: (file: File) => booksApi.upload(file),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ['books'] }),
+    mutationFn: (file: File) => typeof selectedCategory === 'string' ? booksApi.upload(file, { category_id: selectedCategory }) : booksApi.upload(file),
+    onSuccess: async () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['books'] }),
+      queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+    ]),
   })
   const updateBook = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: { title: string; author: string | null } }) => booksApi.update(id, patch),
-    onSuccess: async () => { setEditing(null); await queryClient.invalidateQueries({ queryKey: ['books'] }) },
+    mutationFn: ({ id, patch }: { id: string; patch: BookPatch }) => booksApi.update(id, patch),
+    onSuccess: async () => {
+      setEditing(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['books'] }),
+        queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+      ])
+    },
+  })
+  const updateBookCategory = useMutation({
+    mutationFn: ({ id, categoryId }: { id: string; categoryId: string | null }) => booksApi.update(id, { category_id: categoryId }),
+    onSuccess: async () => {
+      setCategorizing(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['books'] }),
+        queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+      ])
+    },
   })
   const updateCover = useMutation({
     mutationFn: ({ id, file }: { id: string; file: File }) => booksApi.updateCover(id, file),
@@ -159,6 +400,22 @@ export default function BookLibraryPage({ user }: { user: User }) {
     mutationFn: () => authApi.logout(),
     onSuccess: () => { queryClient.clear(); navigate('/login', { replace: true }) },
   })
+  const updateProfile = useMutation({
+    mutationFn: () => authApi.updateProfile({ display_name: displayNameDraft.trim() || null }),
+    onSuccess: (updatedUser) => {
+      queryClient.setQueryData(['me'], updatedUser)
+      setDisplayNameDraft(updatedUser.display_name ?? '')
+    },
+  })
+
+  useEffect(() => {
+    if (!profileOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [profileOpen])
 
   function chooseBook(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -166,8 +423,20 @@ export default function BookLibraryPage({ user }: { user: User }) {
     event.target.value = ''
   }
 
+  function saveProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!updateProfile.isPending) updateProfile.mutate()
+  }
+
+  function changeTheme(nextTheme: ThemeId) {
+    setTheme(nextTheme)
+    applyTheme(nextTheme)
+  }
+
   const editorBusy = updateBook.isPending || updateCover.isPending || removeCover.isPending
   const editorError = updateBook.error?.message ?? updateCover.error?.message ?? removeCover.error?.message
+  const displayName = user.display_name || user.username
+  const joinedAt = user.created_at ? formatLongDate(user.created_at) : '暂无记录'
 
   return (
     <main className="book-library-shell">
@@ -175,8 +444,10 @@ export default function BookLibraryPage({ user }: { user: User }) {
         <Link className="book-library-brand" to="/books"><span className="brand-mark">拾</span><span><b>拾笺</b><small>私人书房</small></span></Link>
         <AppNavigation />
         <div className="book-library-user">
-          <span className="avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span>
-          <span>{user.display_name || user.username}</span>
+          <button className="book-library-user-trigger" type="button" onClick={() => setProfileOpen((value) => !value)} aria-expanded={profileOpen} aria-haspopup="dialog" aria-label={`查看 ${displayName} 的用户信息和设置`} title="用户信息与设置">
+            <span className="avatar">{displayName.slice(0, 1).toUpperCase()}</span>
+            <span>{displayName}</span>
+          </button>
           <button className="book-icon-button" onClick={() => logout.mutate()} disabled={logout.isPending} aria-label="退出登录" title="退出登录"><LogOut size={17} /></button>
         </div>
       </header>
@@ -194,25 +465,28 @@ export default function BookLibraryPage({ user }: { user: User }) {
         {uploadBook.isError && <div className="book-notice error" role="alert">上传失败：{uploadBook.error.message}</div>}
         {uploadBook.isSuccess && <div className="book-notice" role="status">书籍已加入书架。</div>}
 
-        <div className="book-library-toolbar">
-          <label className="book-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="搜索书籍" placeholder="搜索书名或作者" />{search && <button onClick={() => setSearch('')} aria-label="清空搜索"><X size={15} /></button>}</label>
-          <label><span>格式</span><select aria-label="按格式筛选" value={format} onChange={(event) => setFormat(event.target.value as BookFormat | '')}><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="txt">TXT</option><option value="md">Markdown</option></select></label>
-          <label><span>排序</span><select aria-label="书籍排序" value={sort} onChange={(event) => setSort(event.target.value as NonNullable<BookFilters['sort']>)}><option value="recent">最近阅读</option><option value="uploaded">最近上传</option><option value="title">书名</option></select></label>
-        </div>
+        <div className="book-library-workspace">
+          <CategoryNavigation categories={categories.data ?? []} pending={categories.isPending} error={categories.error?.message} selected={selectedCategory} onSelect={setSelectedCategory} onRetry={() => { void categories.refetch() }} />
+          <div className="book-library-books">
+            <div className="book-library-toolbar">
+              <label className="book-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="搜索书籍" placeholder="搜索书名或作者" />{search && <button onClick={() => setSearch('')} aria-label="清空搜索"><X size={15} /></button>}</label>
+              <label><span>格式</span><select aria-label="按格式筛选" value={format} onChange={(event) => setFormat(event.target.value as BookFormat | '')}><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="txt">TXT</option><option value="md">Markdown</option></select></label>
+              <label><span>排序</span><select aria-label="书籍排序" value={sort} onChange={(event) => setSort(event.target.value as NonNullable<BookFilters['sort']>)}><option value="recent">最近阅读</option><option value="uploaded">最近上传</option><option value="title">书名</option></select></label>
+            </div>
 
-        {books.isPending && <div className="book-library-message" aria-live="polite"><LoaderCircle className="spin" size={24} />正在整理书架…</div>}
-        {books.isError && <div className="book-library-message error"><p>书架加载失败</p><span>{books.error.message}</span><button className="text-button" onClick={() => void books.refetch()}>重试</button></div>}
-        {books.data?.length === 0 && (
-          <div className="empty-books">
-            <span><FilePlus2 size={32} /></span>
-            <h2>{deferredSearch || format ? '没有找到匹配的书' : '书架还是空的'}</h2>
-            <p>{deferredSearch || format ? '试试清除搜索或格式筛选。' : '上传 EPUB、PDF、TXT 或 Markdown，开始你的阅读。'}</p>
-            {!deferredSearch && !format && <button className="button primary" onClick={() => uploadInput.current?.click()}><Upload size={17} />上传第一本书</button>}
-          </div>
-        )}
+            {books.isPending && <div className="book-library-message" aria-live="polite"><LoaderCircle className="spin" size={24} />正在整理书架…</div>}
+            {books.isError && <div className="book-library-message error"><p>书架加载失败</p><span>{books.error.message}</span><button className="text-button" onClick={() => void books.refetch()}>重试</button></div>}
+            {books.data?.length === 0 && (
+              <div className="empty-books">
+                <span><FilePlus2 size={32} /></span>
+                <h2>{deferredSearch || format || selectedCategory !== undefined ? '没有找到匹配的书' : '书架还是空的'}</h2>
+                <p>{deferredSearch || format || selectedCategory !== undefined ? '试试清除筛选，或切换到其他分类。' : '上传 EPUB、PDF、TXT 或 Markdown，开始你的阅读。'}</p>
+                {!deferredSearch && !format && selectedCategory === undefined && <button className="button primary" onClick={() => uploadInput.current?.click()}><Upload size={17} />上传第一本书</button>}
+              </div>
+            )}
 
-        {books.data && books.data.length > 0 && (
-          <div className="book-grid" aria-live="polite">
+            {books.data && books.data.length > 0 && (
+              <div className="book-grid" aria-live="polite">
             {books.data.map((book) => {
               const readProgress = percent(book.progress)
               const ocrProgress = percent(book.ocr_progress)
@@ -223,6 +497,9 @@ export default function BookLibraryPage({ user }: { user: User }) {
                     <div className="book-card-heading"><span className="book-format">{formatLabels[book.format]}</span><span>{displaySize(book.size)}</span></div>
                     <Link to={`/books/${book.id}/read`}><h2>{book.title}</h2></Link>
                     <p className="book-author"><span>作者</span>{book.author || '未知'}</p>
+                    <div className="book-category-slot">
+                      {book.category && <span className="book-category-badge">{book.category.name}</span>}
+                    </div>
                     <div className="book-progress" aria-label={`阅读进度 ${readProgress}%`}>
                       <div><span>阅读进度</span><b>{readProgress}%</b></div>
                       <span><i style={{ width: `${readProgress}%` }} /></span>
@@ -237,6 +514,7 @@ export default function BookLibraryPage({ user }: { user: User }) {
                     <div className="book-card-actions">
                       <Link className="button compact primary" to={`/books/${book.id}/read`}>继续阅读</Link>
                       <a className="book-icon-button" href={book.download_url || booksApi.downloadUrl(book.id)} aria-label={`下载《${book.title}》`} title="下载原文件"><Download size={16} /></a>
+                      <button className="book-icon-button" onClick={() => { updateBookCategory.reset(); setCategorizing(book) }} aria-label={`设置《${book.title}》的分类`} title="设置分类"><FolderOpen size={16} /></button>
                       <button className="book-icon-button" onClick={() => { updateBook.reset(); updateCover.reset(); removeCover.reset(); setEditing(book) }} aria-label={`编辑《${book.title}》`} title="编辑"><Pencil size={16} /></button>
                       <button className="book-icon-button danger" onClick={() => { removeBook.reset(); setDeleting(book) }} aria-label={`删除《${book.title}》`} title="永久删除"><Trash2 size={16} /></button>
                     </div>
@@ -244,12 +522,68 @@ export default function BookLibraryPage({ user }: { user: User }) {
                 </article>
               )
             })}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </section>
 
-      {editing && <BookEditor key={editing.id} book={editing} busy={editorBusy} error={editorError} onClose={() => setEditing(null)} onSave={(patch) => updateBook.mutate({ id: editing.id, patch })} onCover={(file) => updateCover.mutate({ id: editing.id, file })} onRemoveCover={() => removeCover.mutate(editing.id)} />}
+      {editing && <BookEditor key={editing.id} book={editing} categories={categories.data ?? []} busy={editorBusy} error={editorError} onClose={() => setEditing(null)} onSave={(patch) => updateBook.mutate({ id: editing.id, patch })} onCover={(file) => updateCover.mutate({ id: editing.id, file })} onRemoveCover={() => removeCover.mutate(editing.id)} />}
+      {categorizing && <BookCategoryEditor key={categorizing.id} book={categorizing} categories={categories.data ?? []} busy={updateBookCategory.isPending} error={updateBookCategory.error?.message} onClose={() => setCategorizing(null)} onSave={(categoryId) => updateBookCategory.mutate({ id: categorizing.id, categoryId })} />}
+      {profileOpen && <button className="profile-scrim" aria-label="关闭用户详情" onClick={() => setProfileOpen(false)} />}
+      {profileOpen && (
+        <section className="profile-popover book-profile-popover" role="dialog" aria-modal="true" aria-labelledby="book-profile-title">
+          <header>
+            <span className="profile-avatar">{displayName.slice(0, 1).toUpperCase()}</span>
+            <div className="profile-identity"><p id="book-profile-title">{displayName}</p><span className="profile-handle">@{user.username}</span></div>
+            <button className="profile-close" onClick={() => setProfileOpen(false)} aria-label="关闭用户详情" autoFocus><X size={16} /></button>
+          </header>
+          <dl>
+            <div><dt>用户名</dt><dd>{user.username}</dd></div>
+            <div><dt>注册时间</dt><dd>{joinedAt}</dd></div>
+          </dl>
+          <fieldset className="theme-settings">
+            <legend>界面主题</legend>
+            <div className="theme-options">
+              {themes.map((option) => (
+                <button className={theme === option.id ? 'active' : ''} type="button" role="radio" aria-checked={theme === option.id} onClick={() => changeTheme(option.id)} key={option.id}>
+                  {option.id === 'warm' && <Palette size={15} />}
+                  {option.id === 'light' && <Sun size={15} />}
+                  {option.id === 'dark' && <Moon size={15} />}
+                  {option.name}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <section className="profile-data-settings" aria-labelledby="book-profile-data-title">
+            <div><strong id="book-profile-data-title">数据管理</strong><span>导入、导出与备份笔记和书籍</span></div>
+            <button className="button compact" type="button" onClick={() => { setProfileOpen(false); setDataManagementOpen(true) }}>打开</button>
+          </section>
+          <DesktopSettings />
+          <form className="profile-settings" onSubmit={saveProfile}>
+            <label htmlFor="book-profile-display-name">显示名称</label>
+            <input id="book-profile-display-name" value={displayNameDraft} onChange={(event) => setDisplayNameDraft(event.target.value)} maxLength={80} placeholder="未设置时显示用户名" autoComplete="name" />
+            {updateProfile.isError && <p className="profile-message error" role="alert">{updateProfile.error.message}</p>}
+            {updateProfile.isSuccess && <p className="profile-message" role="status">设置已保存</p>}
+            <button className="button primary compact" type="submit" disabled={updateProfile.isPending}>{updateProfile.isPending ? '保存中…' : '保存设置'}</button>
+          </form>
+        </section>
+      )}
       <ConfirmDialog open={Boolean(deleting)} title="永久删除这本书？" description={`《${deleting?.title ?? ''}》的原文件、阅读进度和所有批注都将永久删除，且无法恢复。`} confirmLabel="永久删除" danger busy={removeBook.isPending} error={removeBook.error?.message} onCancel={() => setDeleting(null)} onConfirm={() => { if (deleting) removeBook.mutate(deleting.id) }} />
+      {dataManagementOpen && (
+        <DataManagementDialog
+          onClose={() => setDataManagementOpen(false)}
+          onImported={async () => {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['notes'] }),
+              queryClient.invalidateQueries({ queryKey: ['tags'] }),
+              queryClient.invalidateQueries({ queryKey: ['groups'] }),
+              queryClient.invalidateQueries({ queryKey: ['books'] }),
+              queryClient.invalidateQueries({ queryKey: ['book-categories'] }),
+            ])
+          }}
+        />
+      )}
     </main>
   )
 }

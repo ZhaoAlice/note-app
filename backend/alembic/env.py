@@ -13,11 +13,13 @@ from app import models  # noqa: F401
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-database_url = get_settings().database.url
-if database_url.startswith("sqlite:///./"):
-    relative_path = database_url.removeprefix("sqlite:///./")
-    database_url = f"sqlite:///{(BASE_DIR / relative_path).resolve().as_posix()}"
-config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+database_url = config.get_main_option("sqlalchemy.url")
+if not database_url:
+    database_url = get_settings().database.url
+    if database_url.startswith("sqlite:///./"):
+        relative_path = database_url.removeprefix("sqlite:///./")
+        database_url = f"sqlite:///{(BASE_DIR / relative_path).resolve().as_posix()}"
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 

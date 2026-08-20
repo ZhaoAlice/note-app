@@ -9,6 +9,19 @@ export type User = {
   created_at?: string
 }
 
+export type DesktopDatabaseType = 'sqlite' | 'mysql' | 'postgresql'
+
+export type DesktopStatus = {
+  desktop_mode: boolean
+  database_type: DesktopDatabaseType
+  config_path: string | null
+  database_revision: string | null
+  application_revision: string
+  database_status: 'ready' | 'migration_required'
+  allow_auto_bootstrap: boolean
+  user_count: number
+}
+
 export type Tag = {
   id: string
   name: string
@@ -64,6 +77,11 @@ export type BookFormat = 'epub' | 'pdf' | 'txt' | 'md' | 'markdown'
 
 export type BookOcrStatus = 'not_required' | 'queued' | 'running' | 'completed' | 'failed'
 
+export type BookCategory = {
+  id: string
+  name: string
+}
+
 export type BookSummary = {
   id: string
   title: string
@@ -77,6 +95,7 @@ export type BookSummary = {
   progress: number
   ocr_status: BookOcrStatus | null
   ocr_progress?: number | null
+  category: BookCategory | null
   last_read_at: string | null
   created_at: string
   updated_at: string

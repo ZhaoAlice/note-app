@@ -17,7 +17,7 @@ from ..book_files import prepare_book_file, sniff_cover
 from ..book_ocr import wake_ocr_worker
 from ..database import get_db
 from ..dependencies import AuthContext, current_auth, require_csrf
-from ..models import Book, BookAnnotation, BookOcrJob, BookReadingState, BookTextUnit, utcnow
+from ..models import Book, BookAnnotation, BookCategory, BookOcrJob, BookReadingState, BookTextUnit, utcnow
 from ..schemas import (
     AnnotationCreate,
     AnnotationOut,
@@ -47,6 +47,7 @@ BOOK_MIME_TYPES = {
 
 def _book_query():
     return select(Book).options(
+        selectinload(Book.category),
         selectinload(Book.reading_state),
         selectinload(Book.ocr_job),
     )
@@ -57,6 +58,15 @@ def _owned_book(db: Session, user_id: str, book_id: str) -> Book:
     if book is None:
         raise HTTPException(404, "book not found")
     return book
+
+
+def _owned_category(db: Session, user_id: str, category_id: str) -> BookCategory:
+    category = db.scalar(
+        select(BookCategory).where(BookCategory.id == category_id, BookCategory.user_id == user_id)
+    )
+    if category is None:
+        raise HTTPException(404, "book category not found")
+    return category
 
 
 def _owned_annotation(db: Session, user_id: str, book_id: str, annotation_id: str) -> BookAnnotation:
@@ -104,11 +114,20 @@ def _write_upload(file: UploadFile, target: Path, max_bytes: int) -> tuple[int, 
 def list_books(
     q: str | None = Query(default=None, max_length=300),
     format: str | None = Query(default=None),
+    category_id: str | None = Query(default=None, max_length=36),
+    uncategorized: bool = Query(default=False),
     sort: str = Query(default="recent", pattern="^(recent|uploaded|title)$"),
     auth: AuthContext = Depends(current_auth),
     db: Session = Depends(get_db),
 ) -> list[BookSummary]:
+    if category_id is not None and uncategorized:
+        raise HTTPException(422, "category_id and uncategorized cannot be combined")
     query = _book_query().where(Book.user_id == auth.user.id)
+    if category_id is not None:
+        _owned_category(db, auth.user.id, category_id)
+        query = query.where(Book.category_id == category_id)
+    elif uncategorized:
+        query = query.where(Book.category_id.is_(None))
     if format is not None:
         if format not in SUPPORTED_FORMATS:
             raise HTTPException(422, "unsupported book format filter")
@@ -132,10 +151,13 @@ def upload_book(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     author: str | None = Form(default=None),
+    category_id: str | None = Form(default=None, max_length=36),
+    deduplicate: bool = Query(default=False),
     auth: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
     settings: AppSettings = Depends(get_settings),
 ) -> BookDetail:
+    category = _owned_category(db, auth.user.id, category_id) if category_id else None
     original_name = Path(file.filename or "book").name[:255]
     book_format = Path(original_name).suffix.lower().removeprefix(".")
     if book_format not in SUPPORTED_FORMATS:
@@ -159,6 +181,13 @@ def upload_book(
     cover_storage_name: str | None = None
     try:
         size, sha256 = _write_upload(file, temp_original, settings.storage.max_book_bytes)
+        if deduplicate:
+            existing = db.scalar(
+                _book_query().where(Book.user_id == auth.user.id, Book.sha256 == sha256)
+            )
+            if existing is not None:
+                temp_original.unlink(missing_ok=True)
+                return book_out(existing)
         prepared = prepare_book_file(
             temp_original,
             original_name,
@@ -179,6 +208,7 @@ def upload_book(
         fallback_title = Path(original_name).stem.strip() or "Untitled"
         book = Book(
             user_id=auth.user.id,
+            category=category,
             title=(title.strip() if title is not None else prepared.title) or fallback_title,
             author=(author.strip() or None) if author is not None else prepared.author,
             format=book_format,
@@ -240,6 +270,10 @@ def update_book(
         book.title = body.title
     if "author" in body.model_fields_set:
         book.author = body.author
+    if "category_id" in body.model_fields_set:
+        book.category = (
+            _owned_category(db, auth.user.id, body.category_id) if body.category_id is not None else None
+        )
     book.updated_at = utcnow()
     db.commit()
     return book_out(_owned_book(db, auth.user.id, book.id))

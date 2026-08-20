@@ -8,6 +8,7 @@ from .models import Attachment, Book, BookAnnotation, BookOcrJob, BookReadingSta
 from .schemas import (
     AnnotationOut,
     AttachmentOut,
+    BookCategoryOut,
     BookOcrOut,
     BookDetail,
     GroupOut,
@@ -77,6 +78,7 @@ def book_out(book: Book) -> BookDetail:
         id=book.id,
         title=book.title,
         author=book.author,
+        category=BookCategoryOut.model_validate(book.category) if book.category else None,
         format=book.format,
         size=book.size,
         page_count=book.page_count,

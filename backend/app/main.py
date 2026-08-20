@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hmac
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +11,7 @@ from sqlalchemy.exc import OperationalError
 
 from .config import get_settings
 from .book_ocr import start_ocr_worker, stop_ocr_worker
-from .routers import attachments, auth, books, data, notes
+from .routers import attachments, auth, book_categories, books, data, desktop, notes
 
 
 settings = get_settings()
@@ -28,6 +29,18 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Note API", version="0.1.0", debug=settings.server.debug, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def require_desktop_token(request: Request, call_next):
+    """Keep the loopback API private when it is hosted by the desktop shell."""
+    if settings.desktop.enabled and request.url.path.startswith("/api"):
+        supplied = request.headers.get("X-Desktop-Token", "")
+        if not supplied or not hmac.compare_digest(supplied, settings.desktop.token):
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.server.trusted_origins,
@@ -38,8 +51,10 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(notes.router)
 app.include_router(attachments.router)
+app.include_router(book_categories.router)
 app.include_router(books.router)
 app.include_router(data.router)
+app.include_router(desktop.router)
 
 
 @app.exception_handler(OperationalError)

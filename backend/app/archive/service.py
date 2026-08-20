@@ -20,6 +20,7 @@ from ..models import (
     Attachment,
     Book,
     BookAnnotation,
+    BookCategory,
     BookOcrJob,
     BookReadingState,
     BookTextUnit,
@@ -32,8 +33,9 @@ from ..models import (
 
 
 ARCHIVE_FORMAT = "note-backup"
-ARCHIVE_VERSION = 2
+ARCHIVE_VERSION = 3
 LEGACY_ARCHIVE_VERSION = 1
+BOOKS_ARCHIVE_VERSION = 2
 MAX_ARCHIVE_ENTRIES = 10_000
 MAX_ARCHIVE_BYTES = 5 * 1024 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 10 * 1024 * 1024 * 1024
@@ -96,6 +98,9 @@ def _model_json(value: str, label: str) -> dict[str, Any]:
 def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
     groups = list(db.scalars(select(Group).where(Group.user_id == user_id).order_by(Group.id)).all())
     tags = list(db.scalars(select(Tag).where(Tag.user_id == user_id).order_by(Tag.id)).all())
+    book_categories = list(
+        db.scalars(select(BookCategory).where(BookCategory.user_id == user_id).order_by(BookCategory.id)).all()
+    )
     notes = list(
         db.scalars(
             select(Note)
@@ -208,6 +213,7 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                 ]
                 book_value = {
                     "id": book.id,
+                    "category_id": book.category_id,
                     "title": book.title,
                     "author": book.author,
                     "format": book.format,
@@ -234,6 +240,10 @@ def build_backup(db: Session, user_id: str, settings: AppSettings) -> BinaryIO:
                     {"id": item.id, "name": item.name, "created_at": _datetime_out(item.created_at)} for item in groups
                 ],
                 "tags": [{"id": item.id, "name": item.name} for item in tags],
+                "book_categories": [
+                    {"id": item.id, "name": item.name, "created_at": _datetime_out(item.created_at)}
+                    for item in book_categories
+                ],
                 "notes": note_index,
                 "books": book_index,
             }
@@ -337,15 +347,24 @@ def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArc
     entries = _validate_zip(archive)
     manifest = _checked_json(archive, "manifest.json", "manifest")
     version = manifest.get("version")
-    if manifest.get("format") != ARCHIVE_FORMAT or version not in {LEGACY_ARCHIVE_VERSION, ARCHIVE_VERSION}:
+    if manifest.get("format") != ARCHIVE_FORMAT or version not in {
+        LEGACY_ARCHIVE_VERSION,
+        BOOKS_ARCHIVE_VERSION,
+        ARCHIVE_VERSION,
+    }:
         raise _archive_error("unsupported backup format or version")
     _timestamp(manifest.get("exported_at"), "manifest.exported_at")
     groups = _list(manifest.get("groups"), "manifest.groups")
     tags = _list(manifest.get("tags"), "manifest.tags")
     note_index = _list(manifest.get("notes"), "manifest.notes")
-    book_index = _list(manifest.get("books", []), "manifest.books") if version >= 2 else []
+    book_index = _list(manifest.get("books", []), "manifest.books") if version >= BOOKS_ARCHIVE_VERSION else []
+    book_categories = (
+        _list(manifest.get("book_categories"), "manifest.book_categories") if version >= ARCHIVE_VERSION else []
+    )
     group_ids: set[str] = set()
     tag_ids: set[str] = set()
+    book_category_ids: set[str] = set()
+    book_category_names: set[str] = set()
     for index, raw in enumerate(groups):
         item = _mapping(raw, f"manifest.groups[{index}]")
         item_id = _uuid(item.get("id"), f"manifest.groups[{index}].id")
@@ -367,6 +386,23 @@ def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArc
         if not name:
             raise _archive_error("tag name cannot be blank")
         item["id"], item["name"] = item_id, name
+    for index, raw in enumerate(book_categories):
+        item = _mapping(raw, f"manifest.book_categories[{index}]")
+        item_id = _uuid(item.get("id"), f"manifest.book_categories[{index}].id")
+        if item_id in book_category_ids:
+            raise _archive_error("backup contains duplicate book category IDs")
+        book_category_ids.add(item_id)
+        name = _string(item.get("name"), f"manifest.book_categories[{index}].name", 50).strip()
+        if not name:
+            raise _archive_error("book category name cannot be blank")
+        normalized_name = name.casefold()
+        if normalized_name in book_category_names:
+            raise _archive_error("backup contains duplicate book category names")
+        book_category_names.add(normalized_name)
+        item["id"], item["name"] = item_id, name
+        item["created_at"] = _timestamp(
+            item.get("created_at"), f"manifest.book_categories[{index}].created_at"
+        )
     notes: list[dict[str, Any]] = []
     note_ids: set[str] = set()
     referenced_paths = {"manifest.json"}
@@ -498,6 +534,17 @@ def _parse_archive(archive: zipfile.ZipFile, settings: AppSettings) -> ParsedArc
         if _uuid(book.get("id"), f"book {book_id}.id") != book_id:
             raise _archive_error(f"book ID mismatch: {book_id}")
         book["id"] = book_id
+        if version >= ARCHIVE_VERSION:
+            if "category_id" not in book:
+                raise _archive_error(f"book category reference is missing: {book_id}")
+            category_id = book.get("category_id")
+            if category_id is not None:
+                category_id = _uuid(category_id, f"book {book_id}.category_id")
+                if category_id not in book_category_ids:
+                    raise _archive_error(f"book references an unknown category: {book_id}")
+            book["category_id"] = category_id
+        else:
+            book["category_id"] = None
         book["title"] = _string(book.get("title"), f"book {book_id}.title", 300).strip()
         author = book.get("author")
         if author is not None:
@@ -681,6 +728,7 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
         parsed = _parse_archive(archive, settings)
         all_model_ids = set(db.scalars(select(Group.id)).all())
         all_model_ids.update(db.scalars(select(Tag.id)).all())
+        all_model_ids.update(db.scalars(select(BookCategory.id)).all())
         all_model_ids.update(db.scalars(select(Note.id)).all())
         all_model_ids.update(db.scalars(select(Attachment.id)).all())
         all_model_ids.update(db.scalars(select(Book.id)).all())
@@ -690,6 +738,10 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
         }
         current_tags = {
             item.normalized_name: item for item in db.scalars(select(Tag).where(Tag.user_id == user_id)).all()
+        }
+        current_book_categories = {
+            item.normalized_name: item
+            for item in db.scalars(select(BookCategory).where(BookCategory.user_id == user_id)).all()
         }
         group_map: dict[str, Group] = {}
         for raw in parsed.manifest["groups"]:
@@ -714,6 +766,21 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
                 db.add(tag)
                 current_tags[normalized] = tag
             tag_map[raw["id"]] = tag
+        book_category_map: dict[str, BookCategory] = {}
+        for raw in parsed.manifest.get("book_categories", []):
+            normalized = raw["name"].casefold()
+            category = current_book_categories.get(normalized)
+            if category is None:
+                category = BookCategory(
+                    id=_unique_id(raw["id"], all_model_ids),
+                    user_id=user_id,
+                    name=raw["name"],
+                    normalized_name=normalized,
+                    created_at=raw["created_at"],
+                )
+                db.add(category)
+                current_book_categories[normalized] = category
+            book_category_map[raw["id"]] = category
         used_titles = {value.casefold() for value in db.scalars(select(Note.title).where(Note.user_id == user_id)).all()}
         used_book_titles = {
             value.casefold() for value in db.scalars(select(Book.title).where(Book.user_id == user_id)).all()
@@ -853,6 +920,7 @@ def import_backup(source: BinaryIO, db: Session, user_id: str, settings: AppSett
             book = Book(
                 id=book_id,
                 user_id=user_id,
+                category=book_category_map.get(raw["category_id"]),
                 title=title,
                 author=raw["author"],
                 format=raw["format"],

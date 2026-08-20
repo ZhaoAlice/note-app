@@ -20,12 +20,17 @@ class AuthContext:
 
 
 def verify_request_origin(request: Request, settings: AppSettings = Depends(get_settings)) -> None:
+    trusted_origins = {item.rstrip("/") for item in settings.server.trusted_origins}
+    # The desktop sidecar binds an ephemeral loopback port, so it cannot be
+    # listed in static YAML. The desktop-token middleware protects this origin.
+    if settings.desktop.enabled:
+        trusted_origins.add(str(request.base_url).rstrip("/"))
     origin = request.headers.get("origin")
-    if origin and origin.rstrip("/") not in {item.rstrip("/") for item in settings.server.trusted_origins}:
+    if origin and origin.rstrip("/") not in trusted_origins:
         raise HTTPException(403, "untrusted request origin")
     if not origin:
         referer = request.headers.get("referer")
-        if referer and not any(referer.startswith(item.rstrip("/") + "/") for item in settings.server.trusted_origins):
+        if referer and not any(referer.startswith(item + "/") for item in trusted_origins):
             raise HTTPException(403, "untrusted request origin")
 
 

@@ -4,6 +4,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { booksApi } from '../../api'
 import type { BookAnnotation, BookLocation, BookPageText } from '../../types'
 import { annotationColor, type ReaderAdapterProps } from './types'
+import { useReaderPageTurn } from './page-turn'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 
@@ -233,7 +234,9 @@ export default function PdfReader({
   const currentPageRef = useRef(currentPage)
   const [pageWidth, setPageWidth] = useState(760)
   const bookId = useMemo(() => decodeURIComponent(url.match(/\/api\/books\/([^/]+)\/content/)?.[1] ?? ''), [url])
-  const continuous = settings.layout !== 'single-page'
+  // The shared backend default is "paginated"; for PDF it is equivalent to
+  // the explicit "single-page" setting used by the reader controls.
+  const continuous = settings.layout === 'continuous' || settings.layout === 'scrolled'
 
   useEffect(() => {
     const host = hostRef.current
@@ -301,13 +304,17 @@ export default function PdfReader({
     if (continuous) window.requestAnimationFrame(() => scrollToPage(page))
   }, [continuous, numberOfPages, scrollToPage, targetLocation])
 
-  const goToPage = (page: number) => {
+  const goToPage = useCallback((page: number) => {
     const next = Math.max(0, Math.min(numberOfPages - 1, page))
     currentPageRef.current = -1
     setCurrentPage(next)
     reportPage(next)
     if (continuous) scrollToPage(next)
-  }
+  }, [continuous, numberOfPages, reportPage, scrollToPage])
+  const turnPage = useCallback((direction: -1 | 1) => {
+    goToPage(currentPageRef.current + direction)
+  }, [goToPage])
+  const pageTurn = useReaderPageTurn({ enabled: !continuous && numberOfPages > 0, onTurn: turnPage })
 
   return (
     <div className="reader-pdf-shell">
@@ -317,7 +324,7 @@ export default function PdfReader({
         <span>/ {numberOfPages || '—'}</span>
         <button aria-label="下一页" disabled={currentPage >= numberOfPages - 1} onClick={() => goToPage(currentPage + 1)} type="button">›</button>
       </div>
-      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} onScroll={handleScroll} ref={hostRef}>
+      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} onScroll={handleScroll} onWheel={pageTurn.onWheel} ref={hostRef}>
         <Document
           error={<p className="reader-adapter-message error">PDF 加载失败。</p>}
           file={url}
