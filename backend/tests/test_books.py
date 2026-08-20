@@ -7,6 +7,7 @@ import zipfile
 from pypdf import PdfReader, PdfWriter
 
 from app.config import get_settings
+from app.schemas import ReadingStateOut
 
 from .conftest import csrf_headers, register
 
@@ -16,10 +17,25 @@ PNG_1X1 = base64.b64decode(
 )
 
 
-def _upload_text(client, headers, *, name: str = "story.txt", body: bytes = "第一章\nhello world".encode()):
+def test_empty_reading_state_response_uses_null_timestamps():
+    state = ReadingStateOut(book_id="book-without-state")
+
+    assert state.last_read_at is None
+    assert state.updated_at is None
+
+
+def _upload_text(
+    client,
+    headers,
+    *,
+    name: str = "story.txt",
+    body: bytes = "第一章\nhello world".encode(),
+    data: dict[str, str] | None = None,
+):
     return client.post(
         "/api/books",
         headers=headers,
+        data=data,
         files={"file": (name, BytesIO(body), "application/octet-stream")},
     )
 
@@ -205,6 +221,111 @@ def test_book_user_isolation_and_upload_limits(client):
         assert not any(path.name.endswith(".part") for path in settings.book_path().iterdir())
     finally:
         settings.storage.max_book_bytes = previous
+
+
+def test_book_categories_crud_filtering_assignment_and_isolation(client):
+    register(client, "alice")
+    headers = csrf_headers(client)
+
+    assert client.get("/api/book-categories").json() == []
+    assert client.post("/api/book-categories", json={"name": "Fiction"}).status_code == 403
+    fiction_response = client.post(
+        "/api/book-categories", headers=headers, json={"name": "  Fiction  "}
+    )
+    assert fiction_response.status_code == 201, fiction_response.text
+    fiction = fiction_response.json()
+    assert fiction["name"] == "Fiction"
+    assert fiction["created_at"].endswith("Z")
+    duplicate = client.post(
+        "/api/book-categories", headers=headers, json={"name": "fIcTiOn"}
+    )
+    assert duplicate.status_code == 409
+
+    reference = client.post(
+        "/api/book-categories", headers=headers, json={"name": "Reference"}
+    ).json()
+    assert [item["name"] for item in client.get("/api/book-categories").json()] == [
+        "Fiction",
+        "Reference",
+    ]
+
+    categorized = _upload_text(
+        client,
+        headers,
+        name="novel.txt",
+        data={"category_id": fiction["id"]},
+    )
+    assert categorized.status_code == 201, categorized.text
+    categorized_book = categorized.json()
+    assert categorized_book["category"]["id"] == fiction["id"]
+    uncategorized_book = _upload_text(client, headers, name="loose.md").json()
+
+    fiction_books = client.get("/api/books", params={"category_id": fiction["id"]})
+    assert fiction_books.status_code == 200
+    assert [item["id"] for item in fiction_books.json()] == [categorized_book["id"]]
+    loose_books = client.get("/api/books", params={"uncategorized": "true"})
+    assert [item["id"] for item in loose_books.json()] == [uncategorized_book["id"]]
+    mutually_exclusive = client.get(
+        "/api/books",
+        params={"category_id": fiction["id"], "uncategorized": "true"},
+    )
+    assert mutually_exclusive.status_code == 422
+
+    moved = client.patch(
+        f"/api/books/{categorized_book['id']}",
+        headers=headers,
+        json={"category_id": reference["id"]},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["category"]["id"] == reference["id"]
+    removed = client.patch(
+        f"/api/books/{categorized_book['id']}", headers=headers, json={"category_id": None}
+    )
+    assert removed.status_code == 200
+    assert removed.json()["category"] is None
+    assert client.patch(
+        f"/api/books/{categorized_book['id']}",
+        headers=headers,
+        json={"category_id": "00000000-0000-0000-0000-000000000000"},
+    ).status_code == 404
+
+    renamed = client.patch(
+        f"/api/book-categories/{reference['id']}",
+        headers=headers,
+        json={"name": "Archive"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Archive"
+    assigned = client.patch(
+        f"/api/books/{categorized_book['id']}",
+        headers=headers,
+        json={"category_id": fiction["id"]},
+    )
+    assert assigned.status_code == 200
+    assert client.delete(f"/api/book-categories/{fiction['id']}", headers=headers).status_code == 204
+    assert client.get(f"/api/books/{categorized_book['id']}").json()["category"] is None
+
+    assert client.post("/api/auth/logout", headers=headers).status_code == 204
+    register(client, "bob")
+    bob_headers = csrf_headers(client)
+    bob_fiction = client.post(
+        "/api/book-categories", headers=bob_headers, json={"name": "Fiction"}
+    )
+    assert bob_fiction.status_code == 201
+    assert [item["id"] for item in client.get("/api/book-categories").json()] == [
+        bob_fiction.json()["id"]
+    ]
+    assert client.patch(
+        f"/api/book-categories/{reference['id']}",
+        headers=bob_headers,
+        json={"name": "Stolen"},
+    ).status_code == 404
+    assert _upload_text(
+        client,
+        bob_headers,
+        name="foreign.txt",
+        data={"category_id": reference["id"]},
+    ).status_code == 404
 
 
 def test_epub_metadata_safe_reader_and_markdown_extensions(client):

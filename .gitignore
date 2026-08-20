@@ -14,6 +14,15 @@ venv/
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+desktop/resources/frontend/
+desktop/resources/sidecar/
+desktop/resources/ocr-models/
+desktop/resources/build-info.json
+backend/build/
+backend/dist/
 *.tsbuildinfo
 
 # Local application state and secrets
@@ -34,4 +43,3 @@ backend/uploads/
 .vscode/
 .DS_Store
 Thumbs.db
-

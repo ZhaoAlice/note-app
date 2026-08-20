@@ -14,6 +14,7 @@ vi.mock('../api', () => ({
   groupsApi: { list: groupsList, create: groupCreate, rename: groupRename, remove: groupRemove },
   authApi: { logout, updateProfile },
   dataApi: { exportData, importData },
+  desktopApi: { status: vi.fn() },
 }))
 
 function renderPage() {

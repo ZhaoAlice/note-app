@@ -59,6 +59,7 @@ function makeBook(format: BookFormat, patch: Partial<BookDetail> = {}): BookDeta
     last_read_at: null,
     created_at: '2026-08-19T00:00:00Z',
     updated_at: '2026-08-19T00:00:00Z',
+    category: null,
     ...patch,
   }
 }
@@ -85,7 +86,7 @@ describe('BookReader', () => {
       book_id: 'b1',
       locator: { kind: 'text', start: 20 },
       progress: 0.2,
-      font_size: 18,
+      font_size: 100,
       font_family: 'serif',
       line_height: 1.8,
       theme: 'warm',
@@ -116,6 +117,15 @@ describe('BookReader', () => {
     expect(api.contentUrl).toHaveBeenCalledWith('b1')
   })
 
+  it('按 Escape 返回书架首页', async () => {
+    renderReader()
+    expect(await screen.findByTestId('txt-reader')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(await screen.findByText('书架页面')).toBeInTheDocument()
+  })
+
   it('恢复进度并在位置变化后防抖保存', async () => {
     renderReader()
     fireEvent.click(await screen.findByRole('button', { name: '推进阅读' }))
@@ -123,7 +133,7 @@ describe('BookReader', () => {
     await waitFor(() => expect(api.updateState).toHaveBeenCalledWith('b1', expect.objectContaining({
       locator: { kind: 'text', start: 80 },
       progress: 0.8,
-      font_size: 18,
+      font_size: 100,
       line_height: 1.8,
     })), { timeout: 1800 })
   })

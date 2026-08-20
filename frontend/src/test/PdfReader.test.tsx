@@ -32,7 +32,7 @@ const baseProps: ReaderAdapterProps = {
   title: 'PDF',
   initialLocation: { kind: 'pdf', page_index: 0 },
   targetLocation: null,
-  settings: { layout: 'single-page', theme: 'dark' },
+  settings: { layout: 'paginated', theme: 'dark' },
   annotations: [],
   onPositionChange: vi.fn(),
   onSelection: vi.fn(),
@@ -72,5 +72,23 @@ describe('PdfReader', () => {
     fireEvent.scroll(host)
 
     await waitFor(() => expect(screen.getByLabelText('当前页码')).toHaveValue(2))
+  })
+
+  it('默认分页模式支持方向键和鼠标滚轮翻页，页码输入时不误触', async () => {
+    pdfMock.numPages = 4
+    render(<PdfReader {...baseProps} />)
+    const pageInput = await screen.findByLabelText('当前页码')
+    await waitFor(() => expect(pageInput).toHaveValue(1))
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await waitFor(() => expect(pageInput).toHaveValue(2))
+
+    pageInput.focus()
+    fireEvent.keyDown(pageInput, { key: 'ArrowDown' })
+    expect(pageInput).toHaveValue(2)
+    pageInput.blur()
+
+    fireEvent.wheel(document.querySelector('.reader-pdf-host')!, { deltaY: 80 })
+    await waitFor(() => expect(pageInput).toHaveValue(3))
   })
 })

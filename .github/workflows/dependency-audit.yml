@@ -26,6 +26,20 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=moderate --registry=https://registry.npmjs.org
 
+  desktop-runtime:
+    name: Desktop runtime npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Audit locked desktop runtime dependencies
+        working-directory: desktop
+        run: npm audit --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org
+
   backend:
     name: Backend Python audit
     runs-on: ubuntu-latest

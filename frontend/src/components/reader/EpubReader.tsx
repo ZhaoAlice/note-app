@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
-import ePub, { type Book, type Rendition } from 'epubjs'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import ePub, { type Book, type Contents, type Rendition } from 'epubjs'
 import type { NavItem } from 'epubjs/types/navigation'
 import { annotationColor, type ReaderAdapterProps } from './types'
+import { readerFontPercent } from './layout'
+import { useReaderPageTurn } from './page-turn'
 
 type EpubLocation = {
   start: { cfi: string; href?: string; location?: number }
@@ -35,6 +37,14 @@ export default function EpubReader({
   const [currentHref, setCurrentHref] = useState('')
   const [error, setError] = useState('')
 
+  const turnPage = useCallback((direction: -1 | 1) => {
+    const rendition = renditionRef.current
+    if (!rendition) return
+    if (direction < 0) void rendition.prev()
+    else void rendition.next()
+  }, [])
+  const pageTurn = useReaderPageTurn({ enabled: settings.layout !== 'scrolled', onTurn: turnPage })
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -60,11 +70,15 @@ export default function EpubReader({
           allowScriptedContent: false,
         })
         renditionRef.current = rendition
+        rendition.hooks.content.register((contents: Contents) => {
+          contents.document.addEventListener('keydown', pageTurn.onKeyDown)
+          contents.document.addEventListener('wheel', pageTurn.onNativeWheel, { passive: false })
+        })
         rendition.themes.register('reader', {
           body: {
             color: 'var(--reader-fg) !important',
             background: 'var(--reader-bg) !important',
-            'font-size': `${settings.font_size ?? 18}px !important`,
+            'font-size': `${readerFontPercent(settings.font_size)}% !important`,
             'line-height': `${settings.line_height ?? 1.8} !important`,
             'font-family': `${settings.font_family ?? 'serif'} !important`,
             padding: '0 4% !important',
@@ -121,12 +135,12 @@ export default function EpubReader({
     }
     // Rebuild only when the book or flow mode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, settings.layout])
+  }, [pageTurn.onKeyDown, pageTurn.onNativeWheel, settings.layout, url])
 
   useEffect(() => {
     const rendition = renditionRef.current
     if (!rendition) return
-    rendition.themes.fontSize(`${settings.font_size ?? 18}px`)
+    rendition.themes.fontSize(`${readerFontPercent(settings.font_size)}%`)
     rendition.themes.override('line-height', String(settings.line_height ?? 1.8), true)
     if (settings.font_family) rendition.themes.font(settings.font_family)
   }, [settings.font_family, settings.font_size, settings.line_height])
@@ -169,7 +183,7 @@ export default function EpubReader({
   const jump = (target: string) => void renditionRef.current?.display(target)
   if (error) return <div className="reader-adapter-message" role="alert">{error}</div>
   return (
-    <div className="reader-epub-shell">
+    <div className="reader-epub-shell" onWheel={pageTurn.onWheel}>
       <div className="reader-epub-nav">
         <button aria-label="上一页" onClick={() => void renditionRef.current?.prev()} type="button">‹</button>
         <label>

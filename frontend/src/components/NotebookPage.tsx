@@ -33,6 +33,7 @@ import type { Group, NotePatch, NoteSummary, User } from '../types'
 import { applyTheme, getTheme, themes, type ThemeId } from '../theme'
 import ConfirmDialog from './ConfirmDialog'
 import DataManagementDialog from './DataManagementDialog'
+import DesktopSettings from './DesktopSettings'
 import EmptyState from './EmptyState'
 import NoteEditor from './NoteEditor'
 import AppNavigation from './AppNavigation'
@@ -561,6 +562,7 @@ export default function NotebookPage({ user }: { user: User }) {
                 打开
               </button>
             </section>
+            <DesktopSettings />
             <form className="profile-settings" onSubmit={saveProfile}>
               <label htmlFor="profile-display-name">显示名称</label>
               <input

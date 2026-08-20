@@ -30,6 +30,9 @@ class User(Base):
     notes: Mapped[list[Note]] = relationship(back_populates="user", cascade="all, delete-orphan")
     groups: Mapped[list[Group]] = relationship(back_populates="user", cascade="all, delete-orphan")
     tags: Mapped[list[Tag]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    book_categories: Mapped[list[BookCategory]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     books: Mapped[list[Book]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -104,6 +107,20 @@ class Attachment(Base):
     note: Mapped[Note] = relationship(back_populates="attachments")
 
 
+class BookCategory(Base):
+    __tablename__ = "book_categories"
+    __table_args__ = (
+        UniqueConstraint("user_id", "normalized_name", name="uq_book_categories_user_normalized"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(50))
+    normalized_name: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    user: Mapped[User] = relationship(back_populates="book_categories")
+    books: Mapped[list[Book]] = relationship(back_populates="category")
+
+
 class Book(Base):
     __tablename__ = "books"
     __table_args__ = (
@@ -112,6 +129,9 @@ class Book(Base):
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category_id: Mapped[str | None] = mapped_column(
+        ForeignKey("book_categories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(300))
     author: Mapped[str | None] = mapped_column(String(300), nullable=True)
     format: Mapped[str] = mapped_column(String(16))
@@ -127,6 +147,7 @@ class Book(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     user: Mapped[User] = relationship(back_populates="books")
+    category: Mapped[BookCategory | None] = relationship(back_populates="books")
     reading_state: Mapped[BookReadingState | None] = relationship(
         back_populates="book", cascade="all, delete-orphan", uselist=False
     )

@@ -2,6 +2,7 @@ import type {
   Attachment,
   BookAnnotation,
   BookAnnotationInput,
+  BookCategory,
   BookDetail,
   BookFormat,
   BookPageText,
@@ -15,6 +16,7 @@ import type {
   NoteSummary,
   Tag,
   User,
+  DesktopStatus,
 } from './types'
 
 export class ApiError extends Error {
@@ -43,7 +45,7 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: { suppressUnauthorized?: boolean } = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase()
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
@@ -53,7 +55,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const contentType = response.headers.get('content-type') ?? ''
   const payload = contentType.includes('application/json') ? await response.json() : await response.text()
   if (!response.ok) {
-    if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('auth:unauthorized'))
+    if (response.status === 401 && !options.suppressUnauthorized && typeof window !== 'undefined') window.dispatchEvent(new Event('auth:unauthorized'))
     throw new ApiError(errorMessage(payload, `请求失败 (${response.status})`), response.status, payload)
   }
   return payload as T
@@ -83,7 +85,7 @@ async function requestBlob(path: string): Promise<{ blob: Blob; filename?: strin
 }
 
 export const authApi = {
-  me: () => request<User>('/api/auth/me'),
+  me: (options?: { suppressUnauthorized?: boolean }) => request<User>('/api/auth/me', {}, options),
   updateProfile: (body: { display_name: string | null }) => request<User>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
   csrf: async () => {
     const response = await request<{ csrf_token: string }>('/api/auth/csrf')
@@ -152,9 +154,18 @@ export type BookFilters = {
   q?: string
   format?: BookFormat
   sort?: 'recent' | 'uploaded' | 'title'
+  category_id?: string
+  uncategorized?: boolean
 }
 
-export type BookPatch = { title?: string; author?: string | null }
+export type BookPatch = { title?: string; author?: string | null; category_id?: string | null }
+
+export const bookCategoriesApi = {
+  list: () => request<BookCategory[]>('/api/book-categories'),
+  create: (name: string) => request<BookCategory>('/api/book-categories', { method: 'POST', body: JSON.stringify({ name }) }),
+  rename: (id: string, name: string) => request<BookCategory>(`/api/book-categories/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  remove: (id: string) => request<void>(`/api/book-categories/${id}`, { method: 'DELETE' }),
+}
 
 export const booksApi = {
   list: (filters: BookFilters = {}) => {
@@ -162,14 +173,18 @@ export const booksApi = {
     if (filters.q) query.set('q', filters.q)
     if (filters.format) query.set('format', filters.format)
     if (filters.sort) query.set('sort', filters.sort)
+    if (filters.category_id) query.set('category_id', filters.category_id)
+    if (filters.uncategorized) query.set('uncategorized', 'true')
     const suffix = query.size ? `?${query}` : ''
     return request<BookSummary[]>(`/api/books${suffix}`)
   },
   get: (id: string) => request<BookDetail>(`/api/books/${id}`),
-  upload: (file: File) => {
+  upload: (file: File, options: { deduplicate?: boolean; category_id?: string } = {}) => {
     const body = new FormData()
     body.set('file', file)
-    return request<BookDetail>('/api/books', { method: 'POST', body })
+    if (options.category_id) body.set('category_id', options.category_id)
+    const suffix = options.deduplicate ? '?deduplicate=true' : ''
+    return request<BookDetail>(`/api/books${suffix}`, { method: 'POST', body })
   },
   update: (id: string, patch: BookPatch) => request<BookDetail>(`/api/books/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   remove: (id: string) => request<void>(`/api/books/${id}`, { method: 'DELETE' }),
@@ -191,6 +206,11 @@ export const booksApi = {
   search: (id: string, query: string) => request<BookSearchResult>(`/api/books/${id}/search?q=${encodeURIComponent(query)}`),
   getPageText: (id: string, pageIndex: number) => request<BookPageText>(`/api/books/${id}/pages/${pageIndex}/text`),
   retryOcr: (id: string) => request<BookDetail>(`/api/books/${id}/ocr/retry`, { method: 'POST' }),
+}
+
+export const desktopApi = {
+  status: () => request<DesktopStatus>('/api/desktop/status', {}, { suppressUnauthorized: true }),
+  bootstrap: () => request<User>('/api/desktop/bootstrap', { method: 'POST' }, { suppressUnauthorized: true }),
 }
 
 export type DataFormat = 'backup' | 'markdown'

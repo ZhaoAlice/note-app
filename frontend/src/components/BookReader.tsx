@@ -32,6 +32,7 @@ import type {
   User,
 } from '../types'
 import type { ReaderPosition, ReaderSelection } from './reader/types'
+import { DEFAULT_READER_FONT_PERCENT, readerFontPercent } from './reader/layout'
 import '../book-reader.css'
 
 const EpubReader = lazy(() => import('./reader/EpubReader'))
@@ -42,7 +43,7 @@ const MarkdownReader = lazy(() => import('./reader/MarkdownReader'))
 type Sidebar = 'search' | 'annotations' | 'settings' | null
 
 const DEFAULT_SETTINGS: Required<Pick<BookReadingSettings, 'font_size' | 'font_family' | 'line_height' | 'layout' | 'theme'>> = {
-  font_size: 18,
+  font_size: DEFAULT_READER_FONT_PERCENT,
   font_family: 'Noto Serif SC, serif',
   line_height: 1.8,
   layout: 'paginated',
@@ -230,11 +231,21 @@ export default function BookReader({ user }: { user: User }) {
   }, [bookId])
 
   useEffect(() => {
+    const returnToLibrary = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      navigate('/books')
+    }
+    window.addEventListener('keydown', returnToLibrary)
+    return () => window.removeEventListener('keydown', returnToLibrary)
+  }, [navigate])
+
+  useEffect(() => {
     if (!readingState.data || stateReady) return
     const state = readingState.data
     setPosition(state.locator ? { location: state.locator, progress: state.progress } : null)
     setSettings({
-      font_size: state.font_size,
+      font_size: readerFontPercent(state.font_size),
       font_family: state.font_family,
       line_height: state.line_height,
       theme: (['warm', 'light', 'dark'].includes(state.theme) ? state.theme : 'warm') as BookReadingSettings['theme'],
@@ -439,13 +450,13 @@ export default function BookReader({ user }: { user: User }) {
                 </div>
               </fieldset>
               {!isPdf && <>
-                <label>字号 <output>{settings.font_size ?? 18}px</output><input aria-label="字号" max="32" min="12" onChange={(event) => setSettings((current) => ({ ...current, font_size: Number(event.target.value) }))} type="range" value={settings.font_size ?? 18} /></label>
+                <label>字号 <output>{readerFontPercent(settings.font_size)}%</output><input aria-label="字号" max="300" min="50" onChange={(event) => setSettings((current) => ({ ...current, font_size: Number(event.target.value) }))} step="5" type="range" value={readerFontPercent(settings.font_size)} /></label>
                 <label>行距 <output>{(settings.line_height ?? 1.8).toFixed(1)}</output><input aria-label="行距" max="2.6" min="1.2" onChange={(event) => setSettings((current) => ({ ...current, line_height: Number(event.target.value) }))} step="0.1" type="range" value={settings.line_height ?? 1.8} /></label>
               </>}
               <fieldset>
                 <legend>版式</legend>
                 <div className="reader-layout-options">
-                  <button aria-pressed={settings.layout === (isPdf ? 'single-page' : 'paginated')} onClick={() => setSettings((current) => ({ ...current, layout: isPdf ? 'single-page' : 'paginated' }))} type="button"><ChevronLeft size={15} /> 单页 <ChevronRight size={15} /></button>
+                  <button aria-pressed={isPdf ? settings.layout !== 'continuous' && settings.layout !== 'scrolled' : settings.layout === 'paginated'} onClick={() => setSettings((current) => ({ ...current, layout: isPdf ? 'single-page' : 'paginated' }))} type="button"><ChevronLeft size={15} /> 单页 <ChevronRight size={15} /></button>
                   <button aria-pressed={settings.layout === (isPdf ? 'continuous' : 'scrolled')} onClick={() => setSettings((current) => ({ ...current, layout: isPdf ? 'continuous' : 'scrolled' }))} type="button">连续滚动</button>
                 </div>
               </fieldset>

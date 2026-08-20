@@ -59,6 +59,17 @@ class CsrfOut(BaseModel):
     csrf_token: str
 
 
+class DesktopStatusOut(BaseModel):
+    desktop_mode: bool
+    database_type: Literal["sqlite", "mysql", "postgresql"]
+    config_path: str | None
+    database_revision: str | None
+    application_revision: str
+    database_status: Literal["ready", "migration_required"]
+    allow_auto_bootstrap: bool
+    user_count: int
+
+
 class TagOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -171,9 +182,29 @@ class TextBookLocation(BaseModel):
 BookLocation = Annotated[EpubBookLocation | PdfBookLocation | TextBookLocation, Field(discriminator="kind")]
 
 
+class BookCategoryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("book category name cannot be blank")
+        return value
+
+
+class BookCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    name: str
+    created_at: UtcDateTime
+
+
 class BookUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     author: str | None = Field(default=None, max_length=300)
+    category_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("title")
     @classmethod
@@ -197,6 +228,7 @@ class BookSummary(BaseModel):
     id: str
     title: str
     author: str | None
+    category: BookCategoryOut | None
     format: BookFormat
     size: int
     page_count: int | None
@@ -230,8 +262,8 @@ class ReadingStateUpdate(BaseModel):
 
 class ReadingStateOut(ReadingStateUpdate):
     book_id: str
-    last_read_at: UtcDateTime | None
-    updated_at: UtcDateTime | None
+    last_read_at: UtcDateTime | None = None
+    updated_at: UtcDateTime | None = None
 
 
 class AnnotationCreate(BaseModel):

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TextBookLocation } from '../../types'
 import { annotationColor, type ReaderAdapterProps } from './types'
+import { readerFontPixels, readerPageMetrics, readerPageOffset } from './layout'
+import { useReaderPageTurn } from './page-turn'
 import { readTextSelection } from './text-selection'
 
 function TextContents({ text, annotations }: { text: string; annotations: ReaderAdapterProps['annotations'] }) {
@@ -56,6 +58,17 @@ export default function TextReader({
   const viewportRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLPreElement>(null)
   const paginated = settings.layout === 'paginated'
+  const [page, setPage] = useState({ index: 0, count: 1 })
+
+  const refreshPage = useCallback(() => {
+    const viewport = viewportRef.current
+    const content = contentRef.current
+    if (!viewport || !content || !paginated) return
+    const next = readerPageMetrics(viewport, content)
+    setPage((current) => current.index === next.index && current.count === next.count
+      ? current
+      : { index: next.index, count: next.count })
+  }, [paginated])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -77,8 +90,9 @@ export default function TextReader({
     const content = contentRef.current
     if (!viewport || !content || !location || text.length === 0) return
     const fraction = Math.max(0, Math.min(1, location.start / text.length))
-    if (paginated) viewport.scrollLeft = fraction * Math.max(0, content.scrollWidth - viewport.clientWidth)
+    if (paginated) viewport.scrollLeft = readerPageOffset(viewport, content, fraction)
     else viewport.scrollTop = fraction * Math.max(0, content.scrollHeight - viewport.clientHeight)
+    refreshPage()
   }
 
   useEffect(() => {
@@ -94,15 +108,38 @@ export default function TextReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetLocation])
 
+  useEffect(() => {
+    if (!text || !paginated) return
+    const frame = requestAnimationFrame(refreshPage)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refreshPage)
+    if (viewportRef.current) observer?.observe(viewportRef.current)
+    if (contentRef.current) observer?.observe(contentRef.current)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+    }
+  }, [paginated, refreshPage, settings.font_size, settings.line_height, text])
+
+  const turnPage = useCallback((step: number) => {
+    const viewport = viewportRef.current
+    const content = contentRef.current
+    if (!viewport || !content) return
+    const current = readerPageMetrics(viewport, content)
+    const index = Math.max(0, Math.min(current.count - 1, current.index + step))
+    viewport.scrollTo({ left: index * current.width, behavior: 'smooth' })
+  }, [])
+  const pageTurn = useReaderPageTurn({ enabled: paginated, onTurn: turnPage })
+
   const reportPosition = () => {
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content || text.length === 0) return
-    const available = paginated
-      ? Math.max(1, content.scrollWidth - viewport.clientWidth)
-      : Math.max(1, content.scrollHeight - viewport.clientHeight)
-    const offset = paginated ? viewport.scrollLeft : viewport.scrollTop
-    const progress = Math.max(0, Math.min(1, offset / available))
+    const metrics = paginated ? readerPageMetrics(viewport, content) : null
+    const available = Math.max(1, content.scrollHeight - viewport.clientHeight)
+    const progress = metrics
+      ? (metrics.count > 1 ? metrics.index / (metrics.count - 1) : 0)
+      : Math.max(0, Math.min(1, viewport.scrollTop / available))
+    if (metrics) setPage({ index: metrics.index, count: metrics.count })
     const start = Math.round(text.length * progress)
     onPositionChange({ location: { kind: 'text', start }, progress })
   }
@@ -111,17 +148,18 @@ export default function TextReader({
   if (!text) return <div className="reader-adapter-message">正在排版《{title}》…</div>
 
   return (
-    <div className={`reader-text-shell ${paginated ? 'paginated' : ''}`}>
+    <div className={`reader-text-shell ${paginated ? 'paginated' : ''}`} onWheel={pageTurn.onWheel}>
       {paginated && <div className="reader-text-page-nav">
-        <button aria-label="上一页" onClick={() => viewportRef.current?.scrollBy({ left: -viewportRef.current.clientWidth, behavior: 'smooth' })} type="button">‹</button>
-        <button aria-label="下一页" onClick={() => viewportRef.current?.scrollBy({ left: viewportRef.current.clientWidth, behavior: 'smooth' })} type="button">›</button>
+        <button aria-label="上一页" disabled={page.index === 0} onClick={() => turnPage(-1)} type="button">‹</button>
+        <output aria-live="polite">第 {page.index + 1} / {page.count} 页</output>
+        <button aria-label="下一页" disabled={page.index >= page.count - 1} onClick={() => turnPage(1)} type="button">›</button>
       </div>}
       <div
         className={`reader-text-viewport ${paginated ? 'paginated' : ''}`}
         onScroll={reportPosition}
         ref={viewportRef}
         style={{
-          '--reader-font-size': `${settings.font_size ?? 18}px`,
+          '--reader-font-size': readerFontPixels(settings.font_size),
           '--reader-line-height': String(settings.line_height ?? 1.8),
         } as React.CSSProperties}
       >
@@ -135,6 +173,7 @@ export default function TextReader({
         >
           <TextContents annotations={annotations} text={text} />
         </pre>
+        {paginated && <span aria-hidden="true" className="reader-text-end-spacer" />}
       </div>
     </div>
   )

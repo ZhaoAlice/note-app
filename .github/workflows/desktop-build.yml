@@ -1,0 +1,73 @@
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: shijian-windows-x64
+            shell: pwsh
+          - name: macOS Apple Silicon
+            os: macos-15
+            artifact: shijian-macos-arm64
+            shell: bash
+          - name: macOS Intel
+            os: macos-15-intel
+            artifact: shijian-macos-x64
+            shell: bash
+          - name: Linux x64
+            os: ubuntu-latest
+            artifact: shijian-linux-x64
+            shell: bash
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: ./scripts/desktop/build.ps1
+      - name: Build Unix installer
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ./scripts/desktop/build.sh
+          ./scripts/desktop/build.sh
+      - name: Upload unsigned installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/out/make/**
+          if-no-files-found: error
+          retention-days: 14

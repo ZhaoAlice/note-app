@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { booksApi, dataApi, notesApi } from '../api'
+import { bookCategoriesApi, booksApi, dataApi, desktopApi, notesApi } from '../api'
 
 describe('dataApi', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -66,6 +66,11 @@ describe('booksApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/books?q=%E8%AE%BE%E8%AE%A1&format=pdf&sort=title', expect.objectContaining({ credentials: 'include' }))
     await booksApi.getPageText('book-1', 2)
     expect(fetchMock).toHaveBeenLastCalledWith('/api/books/book-1/pages/2/text', expect.objectContaining({ credentials: 'include' }))
+
+    await booksApi.list({ category_id: 'category-1' })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/books?category_id=category-1', expect.objectContaining({ credentials: 'include' }))
+    await booksApi.list({ uncategorized: true })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/books?uncategorized=true', expect.objectContaining({ credentials: 'include' }))
   })
 
   it('使用 multipart 表单上传书籍和封面', async () => {
@@ -75,15 +80,64 @@ describe('booksApi', () => {
     const book = new File(['book'], 'book.epub')
     const cover = new File(['cover'], 'cover.png')
 
-    await booksApi.upload(book)
+    await booksApi.upload(book, { category_id: 'category-1' })
     await booksApi.updateCover('b1', cover)
 
     const uploadInit = fetchMock.mock.calls[0][1] as RequestInit
     const coverInit = fetchMock.mock.calls[1][1] as RequestInit
     expect(fetchMock.mock.calls[0][0]).toBe('/api/books')
     expect((uploadInit.body as FormData).get('file')).toBe(book)
+    expect((uploadInit.body as FormData).get('category_id')).toBe('category-1')
     expect(new Headers(uploadInit.headers).has('Content-Type')).toBe(false)
     expect(fetchMock.mock.calls[1][0]).toBe('/api/books/b1/cover')
     expect((coverInit.body as FormData).get('file')).toBe(cover)
+  })
+
+  it('调用书架分类 CRUD 接口', async () => {
+    const category = { id: 'c1', name: '小说' }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([category]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(category), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...category, name: '文学' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await bookCategoriesApi.list()
+    await bookCategoriesApi.create('小说')
+    await bookCategoriesApi.rename('c1', '文学')
+    await bookCategoriesApi.remove('c1')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/book-categories')
+    expect(fetchMock.mock.calls[1]).toEqual(['/api/book-categories', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '小说' }) })])
+    expect(fetchMock.mock.calls[2]).toEqual(['/api/book-categories/c1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '文学' }) })])
+    expect(fetchMock.mock.calls[3]).toEqual(['/api/book-categories/c1', expect.objectContaining({ method: 'DELETE' })])
+  })
+
+  it('桌面文件关联上传时启用哈希去重', async () => {
+    const response = { id: 'b1', title: '书', author: null, format: 'pdf', size: 4, page_count: 1, cover_url: null, content_url: '/content', download_url: '/download', progress: 0, ocr_status: 'completed', last_read_at: null, created_at: '', updated_at: '' }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await booksApi.upload(new File(['book'], 'book.pdf'), { deduplicate: true })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/books?deduplicate=true')
+  })
+})
+
+describe('desktopApi', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('读取桌面状态并创建本地档案', async () => {
+    const status = { desktop_mode: true, database_type: 'sqlite', config_path: 'C:/data/config.local.yaml', allow_auto_bootstrap: true }
+    const user = { id: 'local', username: 'local' }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(user), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(desktopApi.status()).resolves.toEqual(status)
+    await expect(desktopApi.bootstrap()).resolves.toEqual(user)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/desktop/status')
+    expect(fetchMock.mock.calls[1]).toEqual(['/api/desktop/bootstrap', expect.objectContaining({ method: 'POST', credentials: 'include' })])
   })
 })

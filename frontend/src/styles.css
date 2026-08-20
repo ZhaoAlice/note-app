@@ -384,6 +384,20 @@ a { color: var(--accent); }
 .profile-data-settings strong { color: var(--ink); font-size: 12px; }
 .profile-data-settings span { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .profile-data-settings .button { flex: none; min-height: 31px; }
+.desktop-settings { margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid var(--line); }
+.desktop-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.desktop-settings-heading strong { color: var(--ink); font-size: 12px; }
+.desktop-settings-heading span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.desktop-settings dl { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--field-bg); }
+.desktop-settings dl div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 3px 0; font-size: 10px; }
+.desktop-settings dt { color: var(--muted); }
+.desktop-settings dd { min-width: 0; margin: 0; overflow: hidden; color: var(--text-secondary); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-settings-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.desktop-settings-actions .button { min-width: 0; padding-inline: 7px; gap: 4px; font-size: 10px; }
+.desktop-settings-actions .button:last-child { grid-column: 1 / -1; }
+.desktop-settings-message { margin: 7px 0 0; color: var(--success); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.desktop-settings-message.error { color: var(--danger); }
+.desktop-global-error { position: fixed; top: 12px; left: 50%; z-index: 100; max-width: min(560px, calc(100vw - 24px)); padding: 9px 13px; border: 1px solid var(--danger); border-radius: 9px; color: var(--danger); background: var(--bg-elevated); box-shadow: var(--shadow-lg); font-size: 12px; transform: translateX(-50%); }
 .mobile-settings-button { display: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; place-items: center; color: var(--muted); background: transparent; cursor: pointer; }
 .mobile-settings-button:hover { color: var(--ink); background: var(--warm-2); }
 .sidebar { position: relative; min-width: 0; height: 100vh; display: flex; flex-direction: column; background: var(--warm); border-right: 1px solid var(--line); overflow: hidden; }

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -140,12 +140,34 @@ class OcrSettings(BaseModel):
         return value
 
 
+class DesktopSettings(BaseModel):
+    """Runtime-only settings supplied by the Electron sidecar launcher."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    token: str = ""
+    data_dir: str | None = None
+    resource_dir: str | None = None
+    config_path: str | None = None
+    parent_pid: int | None = None
+    allow_remote_migrations: bool = False
+
+    @model_validator(mode="after")
+    def valid_desktop_runtime(self) -> "DesktopSettings":
+        if self.enabled and len(self.token) < 16:
+            raise ValueError("desktop.token must contain at least 16 characters in desktop mode")
+        if self.parent_pid is not None and self.parent_pid <= 0:
+            raise ValueError("desktop.parent_pid must be positive")
+        return self
+
 class AppSettings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     ocr: OcrSettings = Field(default_factory=OcrSettings)
+    desktop: DesktopSettings = Field(default_factory=DesktopSettings)
 
     def resolve_path(self, value: str) -> Path:
         path = Path(value).expanduser()
@@ -187,11 +209,13 @@ def load_settings() -> AppSettings:
     configured = os.getenv("NOTE_CONFIG_FILE")
     default_path = Path(configured).resolve() if configured else BASE_DIR / "config.yaml"
     _merge(values, _read_yaml(default_path))
-    local_path = BASE_DIR / "config.local.yaml"
-    if not configured:
-        _merge(values, _read_yaml(local_path))
+    configured_local = os.getenv("NOTE_CONFIG_LOCAL_FILE")
+    if configured_local:
+        _merge(values, _read_yaml(Path(configured_local).expanduser().resolve()))
+    elif not configured:
+        _merge(values, _read_yaml(BASE_DIR / "config.local.yaml"))
     for name, raw_value in os.environ.items():
-        if not name.startswith("NOTE_") or name == "NOTE_CONFIG_FILE":
+        if not name.startswith("NOTE_") or name in {"NOTE_CONFIG_FILE", "NOTE_CONFIG_LOCAL_FILE"}:
             continue
         parts = name[5:].lower().split("__")
         cursor = values

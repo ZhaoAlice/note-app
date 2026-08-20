@@ -63,6 +63,7 @@
 - 后端：Python 3.12、FastAPI、SQLAlchemy 2、Alembic、Pydantic、pytest
 - 前端：Vite、React 19、TypeScript、TanStack Query、Tiptap、EPUB.js、PDF.js、React PDF、React Markdown、Lucide React
 - 本地文档处理：RapidOCR、ONNX Runtime、PDFium、pypdf
+- 桌面客户端：Electron、Electron Forge、PyInstaller
 - 测试与检查：pytest、Vitest、React Testing Library、ESLint、TypeScript
 - 数据库：SQLite（默认）、MySQL 8+、PostgreSQL 14+
 
@@ -307,7 +308,7 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-当前验收基线：后端 44 项 pytest、前端 52 项 Vitest 全部通过，ESLint 和生产构建通过。
+当前验收基线：后端 53 项 pytest、前端 63 项 Vitest、Electron 13 项 Vitest 全部通过，ESLint、TypeScript 和生产构建通过。
 
 如需对 MySQL 或 PostgreSQL 运行同一套迁移与集成测试，可配置专用空测试库：
 
@@ -359,6 +360,35 @@ FastAPI 会在 <http://localhost:8000> 同时提供前端静态资源和 `/api`�
 ./scripts/linux/start.sh --host 0.0.0.0 --port 8080
 ```
 
+## Electron 桌面客户端
+
+桌面测试版保留现有 FastAPI 架构：Electron 启动内置 Python sidecar，sidecar 按用户目录中的 `config.local.yaml` 直连 SQLite、MySQL 或 PostgreSQL。Windows 配置文件固定存放在 `%APPDATA%\Shijian\config.local.yaml`（通常为 `C:\Users\<用户名>\AppData\Roaming\Shijian\config.local.yaml`），应用数据路径不使用中文目录名。默认配置使用本机 SQLite；MySQL/PostgreSQL 需要数据库服务可访问，附件和书籍目录也必须位于本机可访问路径。
+
+桌面模式具备：
+
+- 随机本地端口和桌面令牌保护，不向其他本机页面暴露 API。
+- 空数据库自动创建“本地档案”；已有用户时保留原注册登录。
+- SQLite 升级前自动备份；远端数据库升级需在配置中显式设置 `desktop.allow_remote_migrations: true`。
+- EPUB、PDF、TXT、Markdown 文件关联，单实例转发并按 SHA-256 去重导入。
+- 关闭窗口时停止 OCR 和 sidecar，不驻留后台。
+
+安装 Node.js 24、Python 3.12、uv 后可在对应操作系统本机构建：
+
+```powershell
+./scripts/desktop/build.ps1
+```
+
+```bash
+chmod +x scripts/desktop/build.sh
+./scripts/desktop/build.sh
+```
+
+构建脚本会编译前端、冻结 `ShijianBackend`、准备 OCR 模型、运行桌面测试并调用 Electron Forge。产物位于 `desktop/out/make`，并附带 `SHA256SUMS.txt`。Windows 实测未签名安装程序约 292 MB。
+
+Windows 本地构建会复用已经完整安装的 `node_modules`，避免运行中的 Vite 锁定 `esbuild.exe` 导致 `npm ci` 失败。需要强制清洁安装时可运行 `./scripts/desktop/build.ps1 -CleanInstall`，并先关闭当前仓库的 Vite 开发服务；确认依赖已经完整时也可使用 `-SkipInstall`。
+
+GitHub Actions 的 “Desktop installers” 工作流可手动运行，或由 `desktop-v*` 标签触发，分别构建 Windows x64、macOS Intel、macOS Apple Silicon 和 Linux x64 测试包。首版产物未签名、未公证且不支持自动更新。
+
 ## 当前边界
 
-当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、书籍 DRM/加密文件、手写批注、书架分类、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。
+当前版本不包含邮件验证、密码找回、管理员后台、公开分享、实时协作、离线同步、笔记历史版本、书籍 DRM/加密文件、手写批注、书架分类、桌面签名/自动更新、Docker 镜像或公网部署配置。这些能力可以在后续版本中按需扩展。
