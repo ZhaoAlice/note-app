@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from ..config import AppSettings, get_settings
 from ..book_files import inspect_local_book_source, prepare_book_file, sniff_cover
 from ..book_ocr import wake_ocr_worker
+from ..book_toc import find_embedded_toc, infer_toc
 from ..database import get_db
 from ..dependencies import AuthContext, current_auth, require_csrf
 from ..models import Book, BookAnnotation, BookCategory, BookOcrJob, BookReadingState, BookTextUnit, utcnow
@@ -26,6 +27,7 @@ from ..schemas import (
     BookSummary,
     BookSearchItem,
     BookSearchOut,
+    BookTocOut,
     BookPageTextOut,
     BookUpdate,
     ReadingStateOut,
@@ -432,6 +434,38 @@ def upload_book(
 @router.get("/{book_id}", response_model=BookDetail)
 def get_book(book_id: str, auth: AuthContext = Depends(current_auth), db: Session = Depends(get_db)) -> BookDetail:
     return book_out(_owned_book(db, auth.user.id, book_id))
+
+
+@router.get("/{book_id}/toc", response_model=BookTocOut)
+def get_book_toc(
+    book_id: str,
+    auth: AuthContext = Depends(current_auth),
+    db: Session = Depends(get_db),
+    settings: AppSettings = Depends(get_settings),
+) -> BookTocOut:
+    book = _owned_book(db, auth.user.id, book_id)
+    if book.format != "pdf":
+        raise HTTPException(409, "table of contents is only available for PDF books")
+
+    index_complete = book.ocr_job is None or book.ocr_job.status == "completed"
+    embedded = find_embedded_toc(book, settings.book_path())
+    if embedded:
+        return BookTocOut(items=embedded, source="embedded", index_complete=index_complete)
+
+    units = db.scalars(
+        select(BookTextUnit)
+        .where(BookTextUnit.book_id == book.id)
+        .order_by(BookTextUnit.unit_index)
+    ).all()
+    inferred = infer_toc(
+        [(unit.unit_index, unit.text) for unit in units],
+        page_count=book.page_count,
+    )
+    return BookTocOut(
+        items=inferred,
+        source="inferred" if inferred else "none",
+        index_complete=index_complete,
+    )
 
 
 @router.patch("/{book_id}", response_model=BookDetail)

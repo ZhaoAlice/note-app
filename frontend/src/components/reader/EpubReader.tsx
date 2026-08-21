@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ePub, { type Book, type Contents, type Rendition } from 'epubjs'
 import type { NavItem } from 'epubjs/types/navigation'
-import { annotationColor, type ReaderAdapterProps } from './types'
+import { annotationColor, type ReaderAdapterProps, type ReaderTocItem } from './types'
 import { readerFontPercent } from './layout'
 import { useReaderPageTurn } from './page-turn'
 
@@ -18,6 +18,15 @@ function flattenToc(items: NavItem[], level = 0): Array<NavItem & { level: numbe
   ])
 }
 
+function toReaderTocItems(items: NavItem[]): ReaderTocItem[] {
+  return flattenToc(items).map((item, index) => ({
+    id: item.id || `epub-toc-${index}`,
+    label: item.label.trim(),
+    level: item.level,
+    target: { kind: 'epub', href: item.href, requestId: 0 },
+  }))
+}
+
 export default function EpubReader({
   url,
   title,
@@ -25,17 +34,26 @@ export default function EpubReader({
   targetLocation,
   settings,
   annotations,
+  tocTarget,
   onPositionChange,
   onSelection,
+  onTocChange,
+  onActiveTocItemChange,
   onChapterChange,
 }: ReaderAdapterProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const bookRef = useRef<Book | null>(null)
   const renditionRef = useRef<Rendition | null>(null)
-  const [toc, setToc] = useState<Array<NavItem & { level: number }>>([])
   const [chapter, setChapter] = useState('')
-  const [currentHref, setCurrentHref] = useState('')
   const [error, setError] = useState('')
+  const tocItemsRef = useRef<ReaderTocItem[]>([])
+  const tocTargetRef = useRef(tocTarget)
+  const onTocChangeRef = useRef(onTocChange)
+  const onActiveTocItemChangeRef = useRef(onActiveTocItemChange)
+
+  tocTargetRef.current = tocTarget
+  onTocChangeRef.current = onTocChange
+  onActiveTocItemChangeRef.current = onActiveTocItemChange
 
   const turnPage = useCallback((direction: -1 | 1) => {
     const rendition = renditionRef.current
@@ -98,7 +116,12 @@ export default function EpubReader({
           const item = book?.navigation?.get(location.start.href ?? '')
           const label = item?.label?.trim() ?? ''
           setChapter(label)
-          setCurrentHref(item?.href ?? '')
+          const activeHref = item?.href ?? location.start.href ?? ''
+          const activeItem = tocItemsRef.current.find((tocItem) => (
+            tocItem.target.kind === 'epub'
+            && (tocItem.target.href === activeHref || tocItem.id === item?.id)
+          ))
+          onActiveTocItemChangeRef.current?.(activeItem?.id ?? null)
           if (label) onChapterChange?.(label)
           onPositionChange({
             location: { kind: 'epub', cfi, href: location.start.href ?? null },
@@ -112,9 +135,15 @@ export default function EpubReader({
         })
 
         const navigation = await book.loaded.navigation
-        if (!disposed) setToc(flattenToc(navigation.toc))
+        if (disposed) return
+        const readerTocItems = toReaderTocItems(navigation.toc)
+        tocItemsRef.current = readerTocItems
+        onTocChangeRef.current?.(readerTocItems)
         void book.locations.generate(1200).catch(() => undefined)
-        const start = initialLocation?.kind === 'epub' ? initialLocation.cfi : undefined
+        const requestedTarget = tocTargetRef.current
+        const start = requestedTarget?.kind === 'epub'
+          ? requestedTarget.href
+          : initialLocation?.kind === 'epub' ? initialLocation.cfi : undefined
         await rendition.display(start)
       } catch (reason) {
         if (!controller.signal.aborted && !disposed) {
@@ -165,6 +194,10 @@ export default function EpubReader({
   }, [targetLocation])
 
   useEffect(() => {
+    if (tocTarget?.kind === 'epub') void renditionRef.current?.display(tocTarget.href)
+  }, [tocTarget])
+
+  useEffect(() => {
     const rendition = renditionRef.current
     if (!rendition) return
     const installed: Array<{ cfi: string; type: string }> = []
@@ -180,25 +213,12 @@ export default function EpubReader({
     return () => installed.forEach(({ cfi, type }) => rendition.annotations.remove(cfi, type))
   }, [annotations])
 
-  const jump = (target: string) => void renditionRef.current?.display(target)
   if (error) return <div className="reader-adapter-message" role="alert">{error}</div>
   return (
     <div className="reader-epub-shell" onWheel={pageTurn.onWheel}>
       <div className="reader-epub-nav">
         <button aria-label="上一页" onClick={() => void renditionRef.current?.prev()} type="button">‹</button>
-        <label>
-          <span className="sr-only">目录</span>
-          <select
-            aria-label="目录"
-            onChange={(event) => jump(event.target.value)}
-            value={toc.some((item) => item.href === currentHref) ? currentHref : ''}
-          >
-            <option value="">{chapter || '选择章节'}</option>
-            {toc.map((item) => (
-              <option key={`${item.id}-${item.href}`} value={item.href}>{`${'　'.repeat(item.level)}${item.label}`}</option>
-            ))}
-          </select>
-        </label>
+        <span className="reader-epub-chapter" aria-live="polite">{chapter || title}</span>
         <button aria-label="下一页" onClick={() => void renditionRef.current?.next()} type="button">›</button>
       </div>
       <div className="reader-epub-host" data-testid="epub-host" ref={hostRef} title={title} />

@@ -74,10 +74,11 @@ describe('PdfReader', () => {
     await waitFor(() => expect(screen.getByLabelText('当前页码')).toHaveValue(2))
   })
 
-  it('默认分页模式支持方向键和鼠标滚轮翻页，页码输入时不误触', async () => {
+  it('默认分页模式支持方向键和到达页面边界后的鼠标滚轮翻页，页码输入时不误触', async () => {
     pdfMock.numPages = 4
     render(<PdfReader {...baseProps} />)
     const pageInput = await screen.findByLabelText('当前页码')
+    const host = document.querySelector<HTMLElement>('.reader-pdf-host')!
     await waitFor(() => expect(pageInput).toHaveValue(1))
 
     fireEvent.keyDown(window, { key: 'ArrowRight' })
@@ -88,7 +89,84 @@ describe('PdfReader', () => {
     expect(pageInput).toHaveValue(2)
     pageInput.blur()
 
-    fireEvent.wheel(document.querySelector('.reader-pdf-host')!, { deltaY: 80 })
+    Object.defineProperties(host, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    })
+    host.scrollTop = 200
+    fireEvent.wheel(host, { deltaY: 80 })
+    expect(pageInput).toHaveValue(2)
+
+    host.scrollTop = 600
+    fireEvent.wheel(host, { deltaY: 80 })
     await waitFor(() => expect(pageInput).toHaveValue(3))
+    await waitFor(() => expect(host.scrollTop).toBe(0))
+  })
+
+  it('小窗口中的高页面可以从顶部滚到底部，并在跨页时对齐相邻页边缘', async () => {
+    pdfMock.numPages = 3
+    render(<PdfReader {...baseProps} initialLocation={{ kind: 'pdf', page_index: 1 }} />)
+    const pageInput = await screen.findByLabelText('当前页码')
+    const host = document.querySelector<HTMLElement>('.reader-pdf-host')!
+    Object.defineProperties(host, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    })
+    await waitFor(() => expect(pageInput).toHaveValue(2))
+
+    host.scrollTop = 250
+    fireEvent.wheel(host, { deltaY: -80 })
+    expect(pageInput).toHaveValue(2)
+
+    host.scrollTop = 0
+    fireEvent.wheel(host, { deltaY: -80 })
+    await waitFor(() => expect(pageInput).toHaveValue(1))
+    await waitFor(() => expect(host.scrollTop).toBe(600))
+  })
+
+  it.each([
+    ['分页', 'paginated'],
+    ['连续滚动', 'continuous'],
+  ] as const)('%s模式响应目录跳转并报告当前章节', async (_label, layout) => {
+    pdfMock.numPages = 6
+    const onPositionChange = vi.fn()
+    const onActiveTocItemChange = vi.fn()
+    const view = render(
+      <PdfReader
+        {...baseProps}
+        onActiveTocItemChange={onActiveTocItemChange}
+        onPositionChange={onPositionChange}
+        settings={{ ...baseProps.settings, layout }}
+        tocItems={[
+          { id: 'chapter-1', label: '第一章', level: 0, target: { kind: 'pdf', pageIndex: 0, requestId: 0 } },
+          { id: 'chapter-2', label: '第二章', level: 0, target: { kind: 'pdf', pageIndex: 3, requestId: 0 } },
+        ]}
+      />,
+    )
+    await waitFor(() => expect(screen.getByLabelText('当前页码')).toHaveValue(1))
+    const host = document.querySelector<HTMLElement>('.reader-pdf-host')!
+    host.scrollTo = vi.fn()
+
+    view.rerender(
+      <PdfReader
+        {...baseProps}
+        onActiveTocItemChange={onActiveTocItemChange}
+        onPositionChange={onPositionChange}
+        settings={{ ...baseProps.settings, layout }}
+        tocItems={[
+          { id: 'chapter-1', label: '第一章', level: 0, target: { kind: 'pdf', pageIndex: 0, requestId: 0 } },
+          { id: 'chapter-2', label: '第二章', level: 0, target: { kind: 'pdf', pageIndex: 3, requestId: 0 } },
+        ]}
+        tocTarget={{ kind: 'pdf', pageIndex: 4, requestId: 1 }}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByLabelText('当前页码')).toHaveValue(5))
+    expect(onPositionChange).toHaveBeenLastCalledWith({
+      location: { kind: 'pdf', page_index: 4 },
+      progress: 0.8,
+    })
+    expect(onActiveTocItemChange).toHaveBeenLastCalledWith('chapter-2')
+    if (layout === 'continuous') expect(host.scrollTo).toHaveBeenCalled()
   })
 })

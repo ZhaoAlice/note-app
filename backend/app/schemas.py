@@ -315,6 +315,19 @@ class BookSearchOut(BaseModel):
     index_complete: bool
 
 
+class BookTocItem(BaseModel):
+    id: str
+    label: str
+    level: int = Field(ge=1)
+    page_index: int = Field(ge=0)
+
+
+class BookTocOut(BaseModel):
+    items: list[BookTocItem]
+    source: Literal["embedded", "inferred", "none"]
+    index_complete: bool
+
+
 class BookOcrTextBox(BaseModel):
     text: str
     score: float = Field(ge=0.0, le=1.0)

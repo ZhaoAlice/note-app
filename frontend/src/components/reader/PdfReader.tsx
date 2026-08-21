@@ -133,6 +133,7 @@ function PdfPage({
   annotations,
   bookId,
   forceVisible,
+  onLoad,
   onSelection,
   pageIndex,
   target,
@@ -141,6 +142,7 @@ function PdfPage({
   annotations: BookAnnotation[]
   bookId: string
   forceVisible?: boolean
+  onLoad?: () => void
   onSelection: ReaderAdapterProps['onSelection']
   pageIndex: number
   target: BookLocation | null
@@ -204,7 +206,10 @@ function PdfPage({
       {visible && (
         <>
           <Page
-            onLoadSuccess={(page) => setHeight(Math.round(width * page.originalHeight / page.originalWidth))}
+            onLoadSuccess={(page) => {
+              setHeight(Math.round(width * page.originalHeight / page.originalWidth))
+              onLoad?.()
+            }}
             pageNumber={pageIndex + 1}
             renderAnnotationLayer
             renderTextLayer
@@ -224,11 +229,15 @@ export default function PdfReader({
   targetLocation,
   settings,
   annotations,
+  tocItems,
+  tocTarget,
   onPositionChange,
   onSelection,
+  onActiveTocItemChange,
 }: ReaderAdapterProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const scrollFrameRef = useRef<number | null>(null)
+  const pendingPageAlignmentRef = useRef<'start' | 'end' | null>(null)
   const [numberOfPages, setNumberOfPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(initialLocation?.kind === 'pdf' ? initialLocation.page_index : 0)
   const currentPageRef = useRef(currentPage)
@@ -304,17 +313,71 @@ export default function PdfReader({
     if (continuous) window.requestAnimationFrame(() => scrollToPage(page))
   }, [continuous, numberOfPages, scrollToPage, targetLocation])
 
-  const goToPage = useCallback((page: number) => {
+  const alignSinglePage = useCallback((alignment: 'start' | 'end') => {
+    const host = hostRef.current
+    if (!host) return
+    host.scrollTop = alignment === 'end' ? Math.max(0, host.scrollHeight - host.clientHeight) : 0
+  }, [])
+
+  const applyPendingPageAlignment = useCallback(() => {
+    const alignment = pendingPageAlignmentRef.current
+    if (!alignment) return
+    pendingPageAlignmentRef.current = null
+    window.requestAnimationFrame(() => alignSinglePage(alignment))
+  }, [alignSinglePage])
+
+  const goToPage = useCallback((page: number, alignment: 'start' | 'end' = 'start') => {
     const next = Math.max(0, Math.min(numberOfPages - 1, page))
+    const previous = currentPageRef.current
+    if (!continuous) pendingPageAlignmentRef.current = alignment
     currentPageRef.current = -1
     setCurrentPage(next)
     reportPage(next)
     if (continuous) scrollToPage(next)
-  }, [continuous, numberOfPages, reportPage, scrollToPage])
+    else if (next === previous) applyPendingPageAlignment()
+  }, [applyPendingPageAlignment, continuous, numberOfPages, reportPage, scrollToPage])
+
+  useEffect(() => {
+    if (tocTarget?.kind !== 'pdf' || numberOfPages <= 0) return
+    goToPage(tocTarget.pageIndex)
+  }, [goToPage, numberOfPages, tocTarget])
+
+  const activeTocItemId = useMemo(() => {
+    let activeId: string | null = null
+    let activePage = -1
+    for (const item of tocItems ?? []) {
+      if (item.target.kind !== 'pdf') continue
+      const pageIndex = item.target.pageIndex
+      if (pageIndex <= currentPage && pageIndex >= activePage) {
+        activeId = item.id
+        activePage = pageIndex
+      }
+    }
+    return activeId
+  }, [currentPage, tocItems])
+
+  useEffect(() => {
+    onActiveTocItemChange?.(activeTocItemId)
+  }, [activeTocItemId, onActiveTocItemChange])
+
   const turnPage = useCallback((direction: -1 | 1) => {
-    goToPage(currentPageRef.current + direction)
-  }, [goToPage])
+    const next = currentPageRef.current + direction
+    if (next < 0 || next >= numberOfPages) return
+    goToPage(next, direction < 0 ? 'end' : 'start')
+  }, [goToPage, numberOfPages])
   const pageTurn = useReaderPageTurn({ enabled: !continuous && numberOfPages > 0, onTurn: turnPage })
+
+  const handlePdfWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const host = hostRef.current
+    if (!host || continuous) return
+    const vertical = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+    const amount = vertical ? event.deltaY : event.deltaX
+    const canScroll = vertical
+      ? amount < 0 ? host.scrollTop > 1 : host.scrollTop + host.clientHeight < host.scrollHeight - 1
+      : amount < 0 ? host.scrollLeft > 1 : host.scrollLeft + host.clientWidth < host.scrollWidth - 1
+    if (canScroll) return
+    pageTurn.onWheel(event)
+  }, [continuous, pageTurn])
 
   return (
     <div className="reader-pdf-shell">
@@ -324,7 +387,7 @@ export default function PdfReader({
         <span>/ {numberOfPages || '—'}</span>
         <button aria-label="下一页" disabled={currentPage >= numberOfPages - 1} onClick={() => goToPage(currentPage + 1)} type="button">›</button>
       </div>
-      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} onScroll={handleScroll} onWheel={pageTurn.onWheel} ref={hostRef}>
+      <div className={`reader-pdf-host ${continuous ? 'continuous' : 'single-page'}`} onScroll={handleScroll} onWheel={handlePdfWheel} ref={hostRef}>
         <Document
           error={<p className="reader-adapter-message error">PDF 加载失败。</p>}
           file={url}
@@ -345,7 +408,7 @@ export default function PdfReader({
               <PdfPage annotations={annotations} bookId={bookId} key={pageIndex} onSelection={onSelection} pageIndex={pageIndex} target={targetLocation} width={pageWidth} />
             ))
             : numberOfPages > 0 && (
-              <PdfPage annotations={annotations} bookId={bookId} forceVisible onSelection={onSelection} pageIndex={currentPage} target={targetLocation} width={pageWidth} />
+              <PdfPage annotations={annotations} bookId={bookId} forceVisible onLoad={applyPendingPageAlignment} onSelection={onSelection} pageIndex={currentPage} target={targetLocation} width={pageWidth} />
             )}
         </Document>
       </div>

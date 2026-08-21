@@ -9,6 +9,7 @@ import type { ReaderAdapterProps } from '../components/reader/types'
 const api = vi.hoisted(() => ({
   get: vi.fn(),
   getState: vi.fn(),
+  getToc: vi.fn(),
   updateState: vi.fn(),
   listAnnotations: vi.fn(),
   createAnnotation: vi.fn(),
@@ -26,15 +27,21 @@ function MockAdapter({
   kind,
   initialLocation,
   targetLocation,
+  tocTarget,
   onPositionChange,
   onSelection,
+  onTocChange,
+  onActiveTocItemChange,
 }: ReaderAdapterProps & { kind: string }) {
   return (
     <div data-testid={`${kind}-reader`}>
       <span>初始位置：{initialLocation?.kind ?? '无'}</span>
       <span>目标位置：{targetLocation?.kind ?? '无'}</span>
+      <span>目录目标：{tocTarget ? `${tocTarget.kind}-${tocTarget.requestId}` : '无'}</span>
       <button onClick={() => onPositionChange({ location: { kind: 'text', start: 80 }, progress: 0.8 })}>推进阅读</button>
       <button onClick={() => onSelection({ location: { kind: 'text', start: 2, end: 6 }, quote: '重要段落' })}>选择文字</button>
+      {kind === 'epub' && <button onClick={() => onTocChange?.([{ id: 'epub-chapter-1', label: 'EPUB 第一章', level: 1, target: { kind: 'epub', href: 'chapter-1.xhtml', requestId: 0 } }])}>发布 EPUB 目录</button>}
+      {kind === 'epub' && <button onClick={() => onActiveTocItemChange?.('epub-chapter-1')}>激活 EPUB 第一章</button>}
     </div>
   )
 }
@@ -97,6 +104,7 @@ describe('BookReader', () => {
       last_read_at: null,
       updated_at: null,
     })
+    api.getToc.mockResolvedValue({ items: [], source: 'none', index_complete: true })
     api.updateState.mockImplementation(async (_id, state) => ({ book_id: 'b1', ...state, last_read_at: null, updated_at: null }))
     api.listAnnotations.mockResolvedValue([])
     api.createAnnotation.mockImplementation(async (_id, input) => ({ id: 'a1', book_id: 'b1', ...input, color: input.color ?? null, quote: input.quote ?? null, note: input.note ?? null, created_at: '', updated_at: '' }))
@@ -180,6 +188,54 @@ describe('BookReader', () => {
     expect(await screen.findByText('模型不可用')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /重试 OCR/ }))
     await waitFor(() => expect(api.retryOcr).toHaveBeenCalledWith('b1'))
+  })
+
+  it('为 PDF 加载左侧章节目录并把点击目标传给适配器', async () => {
+    api.get.mockResolvedValue(makeBook('pdf'))
+    api.getToc.mockResolvedValue({
+      items: [{ id: 'chapter-1', label: '第一章 启程', level: 1, page_index: 2 }],
+      source: 'embedded',
+      index_complete: true,
+    })
+    renderReader()
+
+    expect(await screen.findByRole('complementary', { name: '章节目录' })).toBeInTheDocument()
+    expect(api.getToc).toHaveBeenCalledWith('b1')
+    const chapter = await screen.findByRole('button', { name: /第一章 启程/ })
+    expect(chapter).toHaveTextContent('第 3 页')
+    fireEvent.click(chapter)
+    expect(await screen.findByText('目录目标：pdf-1')).toBeInTheDocument()
+    expect(chapter).toHaveAttribute('aria-current', 'location')
+  })
+
+  it('接收 EPUB 适配器目录并支持重复章节导航', async () => {
+    api.get.mockResolvedValue(makeBook('epub'))
+    renderReader()
+    fireEvent.click(await screen.findByRole('button', { name: '发布 EPUB 目录' }))
+
+    const chapter = await screen.findByRole('button', { name: 'EPUB 第一章' })
+    fireEvent.click(chapter)
+    expect(await screen.findByText('目录目标：epub-1')).toBeInTheDocument()
+    fireEvent.click(chapter)
+    expect(await screen.findByText('目录目标：epub-2')).toBeInTheDocument()
+    expect(api.getToc).not.toHaveBeenCalled()
+  })
+
+  it('展示 PDF 目录识别中、空目录与错误状态', async () => {
+    api.get.mockResolvedValue(makeBook('pdf'))
+    api.getToc.mockResolvedValueOnce({ items: [], source: 'none', index_complete: false })
+    const first = renderReader()
+    expect(await screen.findByText('正在识别章节目录…')).toBeInTheDocument()
+    first.unmount()
+
+    api.getToc.mockResolvedValueOnce({ items: [], source: 'none', index_complete: true })
+    const second = renderReader()
+    expect(await screen.findByText('未识别到目录。')).toBeInTheDocument()
+    second.unmount()
+
+    api.getToc.mockRejectedValueOnce(new Error('目录服务不可用'))
+    renderReader()
+    expect(await screen.findByText('章节目录加载失败。')).toHaveAttribute('role', 'alert')
   })
 
   it('本地原文件变化时自动刷新，失败后继续使用缓存', async () => {

@@ -192,6 +192,19 @@ export type BookSearchResult = {
   index_complete: boolean
 }
 
+export type BookTocItem = {
+  id: string
+  label: string
+  level: number
+  page_index: number
+}
+
+export type BookTocResult = {
+  items: BookTocItem[]
+  source: 'embedded' | 'inferred' | 'none'
+  index_complete: boolean
+}
+
 export type BookOcrTextBox = {
   text: string
   score: number

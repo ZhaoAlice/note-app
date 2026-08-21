@@ -12,6 +12,8 @@ import {
   Link2,
   MessageSquareText,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   RotateCcw,
@@ -33,7 +35,7 @@ import type {
   BookReadingStateInput,
   User,
 } from '../types'
-import type { ReaderPosition, ReaderSelection } from './reader/types'
+import type { ReaderPosition, ReaderSelection, ReaderTocItem, ReaderTocTarget } from './reader/types'
 import { DEFAULT_READER_FONT_PERCENT, readerFontPercent } from './reader/layout'
 import '../book-reader.css'
 
@@ -72,6 +74,10 @@ function formatProgress(progress: number): string {
 
 function ReaderLoading() {
   return <div className="reader-adapter-message"><LoaderCircle className="spin" size={20} /> 正在加载阅读器…</div>
+}
+
+function isMobileViewport(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
 }
 
 class ReaderErrorBoundary extends Component<{
@@ -191,6 +197,11 @@ export default function BookReader({ user }: { user: User }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [sidebar, setSidebar] = useState<Sidebar>(null)
+  const [tocOpen, setTocOpen] = useState(() => !isMobileViewport())
+  const [epubTocItems, setEpubTocItems] = useState<ReaderTocItem[]>([])
+  const [epubTocReady, setEpubTocReady] = useState(false)
+  const [activeTocItemId, setActiveTocItemId] = useState<string | null>(null)
+  const [tocTarget, setTocTarget] = useState<ReaderTocTarget | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
@@ -200,6 +211,7 @@ export default function BookReader({ user }: { user: User }) {
   const [stateReady, setStateReady] = useState(false)
   const latestState = useRef<BookReadingStateInput | null>(null)
   const refreshAttempt = useRef<string | null>(null)
+  const tocRequestId = useRef(0)
 
   const book = useQuery({
     queryKey: ['books', bookId],
@@ -225,12 +237,24 @@ export default function BookReader({ user }: { user: User }) {
     queryFn: () => booksApi.search(bookId, searchQuery),
     enabled: Boolean(bookId && searchQuery),
   })
+  const toc = useQuery({
+    queryKey: ['books', bookId, 'toc'],
+    queryFn: () => booksApi.getToc(bookId),
+    enabled: Boolean(bookId && book.data?.format === 'pdf'),
+    refetchInterval: (query) => query.state.data?.index_complete === false ? 2500 : false,
+  })
 
   useEffect(() => {
     setStateReady(false)
     setPosition(null)
     setTargetLocation(null)
     setSelection(null)
+    setTocOpen(!isMobileViewport())
+    setEpubTocItems([])
+    setEpubTocReady(false)
+    setActiveTocItemId(null)
+    setTocTarget(null)
+    tocRequestId.current = 0
     refreshAttempt.current = null
   }, [bookId])
 
@@ -359,6 +383,26 @@ export default function BookReader({ user }: { user: User }) {
   }
 
   const currentBook = book.data
+  const isPdf = currentBook.format === 'pdf'
+  const hasToc = isPdf || currentBook.format === 'epub'
+  const pdfTocItems: ReaderTocItem[] = (toc.data?.items ?? []).map((item) => ({
+    id: item.id,
+    label: item.label,
+    level: item.level,
+    pageLabel: `第 ${item.page_index + 1} 页`,
+    target: { kind: 'pdf', pageIndex: item.page_index, requestId: 0 },
+  }))
+  const tocItems = isPdf ? pdfTocItems : epubTocItems
+  const selectTocItem = (item: ReaderTocItem) => {
+    tocRequestId.current += 1
+    setActiveTocItemId(item.id)
+    setTocTarget({ ...item.target, requestId: tocRequestId.current })
+    if (isMobileViewport()) setTocOpen(false)
+  }
+  const toggleToc = () => {
+    setTocOpen((current) => !current)
+    if (isMobileViewport()) setSidebar(null)
+  }
   const adapterProps = {
     url: booksApi.contentUrl(bookId),
     title: currentBook.title,
@@ -366,20 +410,26 @@ export default function BookReader({ user }: { user: User }) {
     targetLocation,
     settings,
     annotations: annotations.data ?? [],
+    tocItems,
+    tocTarget,
     onPositionChange: setPosition,
     onSelection: (next: ReaderSelection) => {
       setSelection(next)
       setSidebar('annotations')
     },
+    onTocChange: (items: ReaderTocItem[]) => {
+      setEpubTocItems(items)
+      setEpubTocReady(true)
+    },
+    onActiveTocItemChange: setActiveTocItemId,
   }
-  const isPdf = currentBook.format === 'pdf'
   const progress = position?.progress ?? readingState.data?.progress ?? currentBook.progress ?? 0
   const ocrActive = currentBook.ocr_status === 'queued' || currentBook.ocr_status === 'running'
   const hasSourceStatus = currentBook.storage_mode === 'linked' && (currentBook.source_status === 'missing' || currentBook.source_status === 'changed' || refreshSource.isError)
   const hasOcrStatus = currentBook.format === 'pdf' && Boolean(currentBook.ocr_status && currentBook.ocr_status !== 'not_required')
 
   return (
-    <main className={`book-reader reader-theme-${settings.theme ?? 'warm'} ${sidebar ? 'sidebar-open' : ''} ${hasSourceStatus ? 'source-status-open' : ''} ${hasOcrStatus ? 'ocr-status-open' : ''}`} data-user={user.id}>
+    <main className={`book-reader reader-theme-${settings.theme ?? 'warm'} ${sidebar ? 'sidebar-open' : ''} ${hasToc && tocOpen ? 'toc-open' : ''} ${hasSourceStatus ? 'source-status-open' : ''} ${hasOcrStatus ? 'ocr-status-open' : ''}`} data-user={user.id}>
       <header className="reader-toolbar">
         <button aria-label="返回书架" className="reader-tool-button" onClick={() => navigate('/books')} type="button"><ArrowLeft size={19} /></button>
         <div className="reader-title">
@@ -391,11 +441,16 @@ export default function BookReader({ user }: { user: User }) {
         </div>
         <span className="reader-progress-label">{formatProgress(progress)}</span>
         <nav aria-label="阅读工具">
+          {hasToc && (
+            <button aria-label={tocOpen ? '收起章节目录' : '展开章节目录'} aria-pressed={tocOpen} className="reader-tool-button reader-toc-toggle" onClick={toggleToc} type="button">
+              {tocOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            </button>
+          )}
           <button aria-label="添加书签" className="reader-tool-button" disabled={!position && !readingState.data?.locator} onClick={addBookmark} type="button"><Bookmark size={18} /></button>
           <button aria-label="书内搜索" aria-pressed={sidebar === 'search'} className="reader-tool-button" onClick={() => toggleSidebar('search')} type="button"><Search size={18} /></button>
           <button aria-label="批注与书签" aria-pressed={sidebar === 'annotations'} className="reader-tool-button" onClick={() => toggleSidebar('annotations')} type="button"><MessageSquareText size={18} /></button>
           <button aria-label="阅读设置" aria-pressed={sidebar === 'settings'} className="reader-tool-button" onClick={() => toggleSidebar('settings')} type="button"><Settings2 size={18} /></button>
-          <button aria-label={sidebar ? '关闭侧栏' : '打开侧栏'} className="reader-tool-button reader-sidebar-toggle" onClick={() => setSidebar(sidebar ? null : 'annotations')} type="button">
+          <button aria-label={sidebar ? '关闭侧栏' : '打开侧栏'} className="reader-tool-button reader-sidebar-toggle" onClick={() => { if (isMobileViewport()) setTocOpen(false); setSidebar(sidebar ? null : 'annotations') }} type="button">
             {sidebar ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </button>
         </nav>
@@ -420,6 +475,44 @@ export default function BookReader({ user }: { user: User }) {
             </aside>
           )}
         </div>
+      )}
+
+      {hasToc && tocOpen && (
+        <>
+          <button aria-label="关闭章节目录" className="reader-toc-backdrop" onClick={() => setTocOpen(false)} type="button" />
+          <aside className="reader-toc" aria-label="章节目录">
+            <header>
+              <h2>章节目录</h2>
+              <button aria-label="收起章节目录" onClick={() => setTocOpen(false)} type="button"><X size={18} /></button>
+            </header>
+            <div className="reader-toc-content">
+              {isPdf && toc.isPending && <p className="reader-panel-message"><LoaderCircle className="spin" size={15} /> 正在加载目录…</p>}
+              {isPdf && toc.isError && <p className="reader-panel-message error" role="alert">章节目录加载失败。</p>}
+              {!isPdf && !epubTocReady && <p className="reader-panel-message"><LoaderCircle className="spin" size={15} /> 正在加载目录…</p>}
+              {isPdf && toc.data && !toc.data.index_complete && tocItems.length === 0 && <p className="reader-panel-message"><LoaderCircle className="spin" size={15} /> 正在识别章节目录…</p>}
+              {isPdf && toc.data && !toc.data.index_complete && tocItems.length > 0 && <p className="reader-index-notice">目录仍在识别，当前章节可能不完整。</p>}
+              {((isPdf && toc.data?.index_complete && tocItems.length === 0) || (!isPdf && epubTocReady && tocItems.length === 0)) && <p className="reader-panel-message">未识别到目录。</p>}
+              {tocItems.length > 0 && (
+                <ol className="reader-toc-list">
+                  {tocItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        aria-current={activeTocItemId === item.id ? 'location' : undefined}
+                        className="reader-toc-item"
+                        onClick={() => selectTocItem(item)}
+                        style={{ '--toc-level': Math.max(0, item.level - 1) } as React.CSSProperties}
+                        type="button"
+                      >
+                        <span>{item.label}</span>
+                        {item.pageLabel && <small>{item.pageLabel}</small>}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </aside>
+        </>
       )}
 
       <section className="reader-stage" aria-label={`${currentBook.title}正文`}>
